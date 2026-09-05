@@ -8,6 +8,7 @@ namespace TCS
 	UInt32 g_skillCount = 0;
 
 	SkillState g_states[kMaxCustomSkills] = {};
+	UInt8 g_postLoadPushCountdown[kMaxCustomSkills] = {};
 
 	void NormalizeState(UInt32 index)
 	{
@@ -145,6 +146,10 @@ namespace TCS
 		outDef.governingAttributeAV = ResolveGoverningAttribute(j.value("governingAttribute", std::string("Strength")));
 		outDef.specialization = ResolveSpecialization(j.value("specialization", std::string("Combat")));
 		outDef.xpCurve = ResolveXPCurve(j.value("xpCurve", std::string("vanilla")));
+		outDef.apprenticeText = j.value("apprenticeText", std::string(""));
+		outDef.journeymanText = j.value("journeymanText", std::string(""));
+		outDef.expertText = j.value("expertText", std::string(""));
+		outDef.masterText = j.value("masterText", std::string(""));
 		return true;
 	}
 
@@ -210,17 +215,55 @@ namespace TCS
 		return g_thePlayer ? *g_thePlayer : nullptr;
 	}
 
-	static void PushSkillLevelToRealAV(UInt32 index)
+	UInt32 GetRealAVLevel(UInt32 index)
+	{
+		if (index >= g_skillCount || g_skills[index].realActorValue == 0)
+			return 0;
+		PlayerCharacter* player = GetPlayer();
+		if (!player)
+			return 0;
+		return static_cast<UInt32>(player->GetAV_F(g_skills[index].realActorValue) + 0.5f);
+	}
+
+	void PushSkillLevelToRealAV(UInt32 index)
 	{
 		if (index >= g_skillCount || g_skills[index].realActorValue == 0)
 			return;
 		PlayerCharacter* player = GetPlayer();
 		if (!player)
 			return;
-		const UInt32 currentAVLevel = static_cast<UInt32>(player->GetActorValue(g_skills[index].realActorValue) + 0.5f);
+		const UInt32 currentAVLevel = static_cast<UInt32>(player->GetAV_F(g_skills[index].realActorValue) + 0.5f);
 		const SInt32 delta = static_cast<SInt32>(g_states[index].level) - static_cast<SInt32>(currentAVLevel);
 		if (delta != 0)
 			player->ModBaseAV(g_skills[index].realActorValue, delta);
+	}
+
+	void ForceSetSkillLevelOnRealAV(UInt32 index)
+	{
+		if (index >= g_skillCount || g_skills[index].realActorValue == 0)
+			return;
+		PlayerCharacter* player = GetPlayer();
+		if (!player)
+			return;
+
+		const UInt32 beforeValue = static_cast<UInt32>(player->GetAV_F(g_skills[index].realActorValue) + 0.5f);
+		player->SetAV_F(g_skills[index].realActorValue, static_cast<float>(g_states[index].level));
+		const UInt32 afterValue = static_cast<UInt32>(player->GetAV_F(g_skills[index].realActorValue) + 0.5f);
+		_MESSAGE("TCS: ForceSetSkillLevelOnRealAV skillId=%u beforeValue=%u setTo=%u afterValue=%u",
+			g_skills[index].skillId, beforeValue, g_states[index].level, afterValue);
+	}
+
+	static void ContributeMajorSkillAdvances(UInt32 index, UInt32 levelUps);
+
+	static void ContributeAttributeBonusBucket(UInt32 index, UInt32 levelUps)
+	{
+		if (!levelUps || index >= g_skillCount || g_skills[index].governingAttributeAV > kActorVal_Luck)
+			return;
+		PlayerCharacter* player = GetPlayer();
+		if (!player)
+			return;
+		for (UInt32 i = 0; i < levelUps; ++i)
+			reinterpret_cast<PlayerIncrementAttributeBonusBucketFn>(kPlayerIncrementAttributeBonusBucket)(player, g_skills[index].governingAttributeAV);
 	}
 
 	void ReconcileSkillLevelWithRealAV(UInt32 index)
@@ -240,16 +283,44 @@ namespace TCS
 
 		NormalizeState(index);
 		SkillState& state = g_states[index];
-		const UInt32 avLevel = static_cast<UInt32>(player->GetActorValue(g_skills[index].realActorValue) + 0.5f);
+		const UInt32 avLevel = static_cast<UInt32>(player->GetAV_F(g_skills[index].realActorValue) + 0.5f);
 
 		_MESSAGE("TCS: ReconcileSkillLevelWithRealAV skillId=%u realActorValue=%08X avLevel=%u stateLevel=%u",
 			g_skills[index].skillId, g_skills[index].realActorValue, avLevel, state.level);
 
 		if (avLevel > state.level)
 		{
+			const UInt32 previousLevel = state.level;
 			state.level = (avLevel > kMaxSkillLevel) ? kMaxSkillLevel : avLevel;
 			state.progress = 0.0f;
 			_MESSAGE("TCS: ReconcileSkillLevelWithRealAV skillId=%u AV was higher, adopted avLevel=%u", g_skills[index].skillId, state.level);
+			ContributeMajorSkillAdvances(index, state.level - previousLevel);
+			ContributeAttributeBonusBucket(index, state.level - previousLevel);
+		}
+	}
+
+	void ReconcileSkillProgressWithXSkills(UInt32 index)
+	{
+		if (index >= g_skillCount || g_skills[index].realActorValue == 0)
+			return;
+
+		float xProgress = 0.0f;
+		float xRequired = 0.0f;
+		if (!ReadXSkillsProgress(g_skills[index].realActorValue, xProgress, xRequired))
+			return;
+
+		if (!std::isfinite(xProgress) || xProgress < 0.0f)
+			return;
+		if (!std::isfinite(xRequired) || xRequired <= 0.0f)
+			return;
+
+		SkillState& state = g_states[index];
+		if (state.progress != xProgress || state.requiredProgress != xRequired)
+		{
+			_MESSAGE("TCS: ReconcileSkillProgressWithXSkills skillId=%u adopted progress=%.2f/%.2f (was %.2f/%.2f)",
+				g_skills[index].skillId, xProgress, xRequired, state.progress, state.requiredProgress);
+			state.progress = xProgress;
+			state.requiredProgress = xRequired;
 		}
 	}
 
@@ -272,7 +343,7 @@ namespace TCS
 				if (player)
 				{
 					NormalizeState(i);
-					UInt32 avLevel = static_cast<UInt32>(player->GetActorValue(g_skills[i].realActorValue) + 0.5f);
+					UInt32 avLevel = static_cast<UInt32>(player->GetAV_F(g_skills[i].realActorValue) + 0.5f);
 					if (avLevel > kMaxSkillLevel)
 						avLevel = kMaxSkillLevel;
 					if (avLevel > g_states[i].level)
@@ -283,6 +354,26 @@ namespace TCS
 			{
 				NormalizeState(i);
 				PushSkillLevelToRealAV(i);
+			}
+
+			const bool linked = LinkSkillWithXSkills(g_skills[i].realActorValue, g_skills[i].name.c_str());
+			g_skills[i].isOwnForm = linked;
+
+			if (linked)
+			{
+				const bool wroteAttribute = SetXSkillsGoverningAttributeAndSpecialization(g_skills[i].realActorValue,
+					g_skills[i].governingAttributeAV, g_skills[i].specialization);
+				_MESSAGE("TCS: SetXSkillsGoverningAttributeAndSpecialization for \"%s\" avCode=%08X governingAttributeAV=%u specialization=%u -> %s",
+					g_skills[i].name.c_str(), g_skills[i].realActorValue, g_skills[i].governingAttributeAV, g_skills[i].specialization,
+					wroteAttribute ? "OK" : "FAILED");
+
+				const bool wroteIcon = SetXSkillsIcon(g_skills[i].realActorValue, g_skills[i].iconLarge);
+				_MESSAGE("TCS: SetXSkillsIcon for \"%s\" avCode=%08X iconLarge=\"%s\" -> %s",
+					g_skills[i].name.c_str(), g_skills[i].realActorValue, g_skills[i].iconLarge.c_str(),
+					wroteIcon ? "OK" : "FAILED");
+
+				g_skills[i].xSkillsForm = GetXSkillsFormForAV(g_skills[i].realActorValue);
+				_MESSAGE("TCS: captured xSkillsForm=%p for \"%s\"", g_skills[i].xSkillsForm, g_skills[i].name.c_str());
 			}
 		}
 	}
@@ -467,6 +558,25 @@ namespace TCS
 		return 10;
 	}
 
+	static void ContributeMajorSkillAdvances(UInt32 index, UInt32 levelUps)
+	{
+		if (!levelUps || !IsEffectiveMajor(index))
+			return;
+		PlayerCharacter* player = GetPlayer();
+		if (!player)
+			return;
+
+		const UInt32 levelUpSkillCount = GetLevelUpSkillCount();
+		for (UInt32 i = 0; i < levelUps; ++i)
+		{
+			++player->majorSkillAdvances;
+			if (levelUpSkillCount)
+				reinterpret_cast<PlayerMaybeStartNextAttributeBonusBucketFn>(kPlayerMaybeStartNextAttributeBonusBucket)(player);
+			if (levelUpSkillCount && player->majorSkillAdvances >= levelUpSkillCount)
+				player->bCanLevelUp = 1;
+		}
+	}
+
 	static void MirrorLevelUpSideEffects(UInt32 index, UInt32 levelUps)
 	{
 		if (!levelUps)
@@ -475,21 +585,8 @@ namespace TCS
 		if (!player)
 			return;
 
-		for (UInt32 i = 0; i < levelUps; ++i)
-		{
-			if (g_skills[index].governingAttributeAV <= kActorVal_Luck)
-				reinterpret_cast<PlayerIncrementAttributeBonusBucketFn>(kPlayerIncrementAttributeBonusBucket)(player, g_skills[index].governingAttributeAV);
-
-			if (IsEffectiveMajor(index))
-			{
-				++player->majorSkillAdvances;
-				const UInt32 levelUpSkillCount = GetLevelUpSkillCount();
-				if (levelUpSkillCount)
-					reinterpret_cast<PlayerMaybeStartNextAttributeBonusBucketFn>(kPlayerMaybeStartNextAttributeBonusBucket)(player);
-				if (levelUpSkillCount && player->majorSkillAdvances >= levelUpSkillCount)
-					player->bCanLevelUp = 1;
-			}
-		}
+		ContributeAttributeBonusBucket(index, levelUps);
+		ContributeMajorSkillAdvances(index, levelUps);
 	}
 
 	static bool ShowSkillPerkPopup(UInt32 index, UInt32 mastery)
@@ -547,7 +644,6 @@ namespace TCS
 		if (state.level >= kMaxSkillLevel)
 			return true;
 
-		const UInt32 previousLevel = state.level;
 		UInt32 levelUps = 0;
 		state.progress += amount;
 		if (!std::isfinite(state.progress) || state.progress < 0.0f)
@@ -569,7 +665,6 @@ namespace TCS
 		if (levelUps)
 		{
 			MirrorLevelUpSideEffects(index, levelUps);
-			NotifyLevelIncrease(index, previousLevel, levelUps);
 			PushSkillLevelToRealAV(index);
 		}
 
@@ -646,6 +741,12 @@ namespace TCS
 				{
 					g_states[index] = savedState;
 					++restored;
+
+					PushSkillLevelToRealAV(index);
+					_MESSAGE("TCS: LoadCallback push readback skillId=%u realActorValue=%08X pushedLevel=%u readback=%u",
+						savedSkillId, g_skills[index].realActorValue, g_states[index].level, GetRealAVLevel(index));
+
+					g_postLoadPushCountdown[index] = kPostLoadPushDelay;
 				}
 				else
 				{
@@ -669,7 +770,6 @@ namespace TCS
 			g_pluginHandle, (void*)g_serialization, (void*)&SaveCallback, (void*)&LoadCallback);
 		g_serialization->SetSaveCallback(g_pluginHandle, SaveCallback);
 		_MESSAGE("TCS: SetSaveCallback call completed");
-
 		g_serialization->SetPreloadCallback(g_pluginHandle, LoadCallback);
 		_MESSAGE("TCS: SetPreloadCallback call completed");
 	}

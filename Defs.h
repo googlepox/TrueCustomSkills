@@ -1,6 +1,7 @@
 #pragma once
 
 #include "obse/PluginAPI.h"
+#include "obse/GameAPI.h"
 #include "obse/GameActorValues.h"
 #include "obse/GameData.h"
 #include "obse/GameForms.h"
@@ -29,6 +30,7 @@ namespace TCS
 	static constexpr UInt32 kPluginVersion = 1;
 
 	static constexpr UInt32 kSaveVersion = 3;
+
 	static constexpr UInt32 kRecordState = ('T') | ('C' << 8) | ('S' << 16) | ('S' << 24);
 
 	static constexpr UInt32 kMaxSkillLevel = 100;
@@ -111,6 +113,32 @@ namespace TCS
 	static constexpr UInt32 kAVTokenLookupNextRVA = 0x1001F160 - 0x10000000;
 	using AVTokenLookupNextFn = void* (__cdecl*)(const void* current);
 
+	static constexpr UInt32 kXSkillsLinkFormExRVA = 0x10019F80 - 0x10000000;
+	static constexpr UInt32 kTESSkillExActorValueOffset = 0x2C;
+	using LinkFormExFn = char(__thiscall*)(void* skillForm);
+
+	static constexpr UInt32 kXSkillsSkillMapRVA = 0x10053430 - 0x10000000;
+	static constexpr UInt32 kXSkillsFormMapRVA = 0x10053624 - 0x10000000;
+
+	static constexpr UInt32 kXSkillsTreeFindRVA = 0x10017050 - 0x10000000;
+	using XSkillsTreeFindFn = void** (__thiscall*)(void* treeHeader, void** outSlot, const UInt32* key);
+
+	static constexpr UInt32 kXSkillsRecordProgressOffset = 0x18;
+	static constexpr UInt32 kXSkillsRecordRequiredProgressOffset = 0x1C;
+
+	static constexpr UInt32 kTESDescriptionGetTextVtableSlot = 0xA54EF0;
+	using TESDescriptionGetTextFn = const char* (__thiscall*)(void* thisDescription, TESForm* parentForm, UInt32 recordCode);
+
+	static constexpr UInt32 kTESSkillGetMasteryDescription = 0x0052EAB0;
+	static constexpr UInt32 kTESSkillGetMasteryDescriptionPatchLength = 8;
+	static const UInt8 kTESSkillGetMasteryDescriptionExpected[kTESSkillGetMasteryDescriptionPatchLength] =
+	{
+		0x8B, 0x54, 0x24, 0x04, // mov edx, [esp+4]
+		0x85, 0xD2,             // test edx, edx
+		0x75, 0x08,             // jnz short +8
+	};
+	using TESSkillGetMasteryDescriptionFn = const char* (__thiscall*)(void* thisForm, UInt32 masteryLevel);
+
 	static constexpr UInt32 kOpenSkillPerkMenu = 0x0057B370;
 	typedef UInt32(__cdecl* _OpenSkillPerkMenu)(const char* xmlName, UInt32 arg1, UInt32 arg2, UInt32 arg3, ...);
 	static constexpr UInt32 kGenericMenuArgInt = 0;
@@ -177,6 +205,12 @@ namespace TCS
 		UInt32 specialization;
 		XPCurveMode xpCurve;
 		UInt32 realActorValue = 0;
+		bool isOwnForm = false;
+		void* xSkillsForm = nullptr;
+		std::string apprenticeText;
+		std::string journeymanText;
+		std::string expertText;
+		std::string masterText;
 	};
 
 	struct SkillState
@@ -245,7 +279,7 @@ namespace TCS
 
 	static constexpr UInt32 kPickerSyntheticMarkerTrait = kTileValue_user23;
 
-	static constexpr UInt32 kPickerRowPlaceholderNativeValue = kActorVal_Luck; 
+	static constexpr UInt32 kPickerRowPlaceholderNativeValue = kActorVal_Luck; // still used as the safe default/fallback value where a specific skill index isn't available
 	static constexpr UInt32 kSafeMarkerAVs[] = {
 		kActorVal_Strength, kActorVal_Intelligence, kActorVal_Willpower, kActorVal_Agility,
 		kActorVal_Speed, kActorVal_Endurance, kActorVal_Personality, kActorVal_Luck,
@@ -330,6 +364,7 @@ namespace TCS
 	struct StatsRow
 	{
 		Tile* tile;
+		bool isFallback;
 	};
 
 	static constexpr UInt32 kStatSkillScrollBarId = 32;
@@ -346,12 +381,11 @@ namespace TCS
 
 	using StatsMenuRefreshFn = void(__thiscall*)(void* statsMenu, UInt32 actorValue);
 
-
-	// --- Declarations for symbols defined in other .cpp files ---
-
 	extern SkillDefinition g_skills[kMaxCustomSkills];
 	extern UInt32 g_skillCount;
 	extern SkillState g_states[kMaxCustomSkills];
+	static constexpr UInt8 kPostLoadPushDelay = 2;
+	extern UInt8 g_postLoadPushCountdown[kMaxCustomSkills];
 	void NormalizeState(UInt32 index);
 	float GetProgressFraction(UInt32 index);
 	extern UInt32 g_appliedPatches;
@@ -360,6 +394,7 @@ namespace TCS
 	bool WriteRelCallChained(const char* name, UInt32 address, UInt32 expectedTarget, UInt32 hookTarget, UInt32& originalTarget);
 	bool WriteRelJumpChecked(const char* name, UInt32 address, const UInt8* expected, UInt32 expectedLength, UInt32 target, UInt32 patchLength = 5);
 	bool InstallFunctionJumpHook(const char* name, UInt32 address, const UInt8* expected, UInt32 expectedLength, UInt32 target, UInt32 patchLength, void*& original);
+	[[nodiscard]] UInt32 __stdcall DetourVtable(UInt32 addr, UInt32 dst);
 	void SetTileString(Tile* tile, UInt32 trait, const char* value);
 	float GetTileFloat(Tile* tile, UInt32 trait);
 	void SetTileFloat(Tile* tile, UInt32 trait, float value);
@@ -370,6 +405,19 @@ namespace TCS
 	extern void* g_avTokenRegister;
 	extern void* g_avTokenLookupNext;
 	bool ResolveAddActorValues();
+	extern void* g_xSkillsLinkFormEx;
+	bool ResolveXSkillsLinkFormEx();
+	bool LinkSkillWithXSkills(UInt32 avCode, const char* skillName);
+	extern void* g_xSkillsTreeFind;
+	extern void* g_xSkillsSkillMap;
+	bool ResolveXSkillsSkillMap();
+	extern void* g_xSkillsFormMap;
+	bool ResolveXSkillsFormMap();
+	bool ReadXSkillsProgress(UInt32 avCode, float& outProgress, float& outRequired);
+	bool ReadXSkillsSkillCode(UInt32 avCode, UInt8& outSkillCode);
+	bool SetXSkillsGoverningAttributeAndSpecialization(UInt32 avCode, UInt32 governingAttribute, UInt32 specialization);
+	bool SetXSkillsIcon(UInt32 avCode, const std::string& iconPath);
+	void* GetXSkillsFormForAV(UInt32 avCode);
 	bool InstallHooks();
 	UInt32 GetSkillIndexById(UInt32 skillId);
 	const char* GetSkillIconLarge(UInt32 index);
@@ -377,6 +425,10 @@ namespace TCS
 	void ComposeSkillDescriptionText(UInt32 index, char* buffer, UInt32 bufferSize);
 	UInt32 RegisterCustomActorValue(const std::string& skillName, bool& outWasReused);
 	void ReconcileSkillLevelWithRealAV(UInt32 index);
+	void PushSkillLevelToRealAV(UInt32 index);
+	void ForceSetSkillLevelOnRealAV(UInt32 index);
+	UInt32 GetRealAVLevel(UInt32 index);
+	void ReconcileSkillProgressWithXSkills(UInt32 index);
 	void EnsureCustomActorValuesRegistered();
 	void LoadSkillDefinitionsFromDisk();
 	void RegisterSerializationCallbacks();

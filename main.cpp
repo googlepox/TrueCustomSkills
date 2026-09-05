@@ -1,4 +1,6 @@
 #include "Defs.h"
+#include "obse/CommandTable.h"
+#include "obse/ParamInfos.h"
 
 IDebugLog gLog("TrueCustomSkills.log");
 
@@ -30,6 +32,34 @@ namespace TCS
 		if (messaging && messaging->RegisterListener)
 			messaging->RegisterListener(g_pluginHandle, "OBSE", MessageHandler);
 	}
+
+	bool Cmd_GetTCSSkillCode_Execute(COMMAND_ARGS)
+	{
+		char editorId[512] = {};
+		*result = 0.0;
+
+		if (!ExtractArgs(PASS_EXTRACT_ARGS, &editorId))
+			return true;
+
+		for (UInt32 i = 0; i < g_skillCount; ++i)
+		{
+			if (_stricmp(g_skills[i].editorId.c_str(), editorId) == 0)
+			{
+				UInt8 skillCode = 0;
+				if (ReadXSkillsSkillCode(g_skills[i].realActorValue, skillCode)) {
+					*result = static_cast<double>(skillCode);
+					Console_Print("AVCode for %s: %u", editorId, skillCode);
+					_MESSAGE("TCS: AVCode for %s: %u", editorId, skillCode);
+				}
+				break;
+			}
+		}
+		return true;
+	}
+
+	DEFINE_COMMAND_PLUGIN(GetTCSSkillCode,
+		"returns a True Custom Skills skill's xSkills-internal skill code (for use with MenuQue's own skill commands) by editorId, or 0 if not found/not yet resolvable",
+		0, 1, kParams_OneString);
 
 }
 
@@ -67,6 +97,10 @@ extern "C"
 		TCS::RegisterSerializationCallbacks();
 		TCS::LoadSkillDefinitionsFromDisk();
 		TCS::RegisterMessaging(obse);
+
+		if (!obse->RegisterCommand(&TCS::kCommandInfo_GetTCSSkillCode))
+			_ERROR("TCS: failed to register GetTCSSkillCode command");
+
 		return true;
 	}
 }
