@@ -270,14 +270,11 @@ namespace TCS
 	{
 		if (index >= g_skillCount || g_skills[index].realActorValue == 0)
 		{
-			_MESSAGE("TCS: ReconcileSkillLevelWithRealAV skillId=%u SKIPPED — index/realActorValue check failed (realActorValue=%u)",
-				index < g_skillCount ? g_skills[index].skillId : 0, index < g_skillCount ? g_skills[index].realActorValue : 0);
 			return;
 		}
 		PlayerCharacter* player = GetPlayer();
 		if (!player)
 		{
-			_MESSAGE("TCS: ReconcileSkillLevelWithRealAV skillId=%u SKIPPED — GetPlayer() returned null", g_skills[index].skillId);
 			return;
 		}
 
@@ -285,15 +282,11 @@ namespace TCS
 		SkillState& state = g_states[index];
 		const UInt32 avLevel = static_cast<UInt32>(player->GetAV_F(g_skills[index].realActorValue) + 0.5f);
 
-		_MESSAGE("TCS: ReconcileSkillLevelWithRealAV skillId=%u realActorValue=%08X avLevel=%u stateLevel=%u",
-			g_skills[index].skillId, g_skills[index].realActorValue, avLevel, state.level);
-
 		if (avLevel > state.level)
 		{
 			const UInt32 previousLevel = state.level;
 			state.level = (avLevel > kMaxSkillLevel) ? kMaxSkillLevel : avLevel;
 			state.progress = 0.0f;
-			_MESSAGE("TCS: ReconcileSkillLevelWithRealAV skillId=%u AV was higher, adopted avLevel=%u", g_skills[index].skillId, state.level);
 			ContributeMajorSkillAdvances(index, state.level - previousLevel);
 			ContributeAttributeBonusBucket(index, state.level - previousLevel);
 		}
@@ -759,6 +752,12 @@ namespace TCS
 			_MESSAGE("TCS: LoadCallback found NO matching record — g_states left at defaults (all major=0)");
 	}
 
+	static void NewGameCallback(void*)
+	{
+		std::memset(g_states, 0, sizeof(g_states));
+		std::memset(g_postLoadPushCountdown, 0, sizeof(g_postLoadPushCountdown));
+	}
+
 	void RegisterSerializationCallbacks()
 	{
 		if (!g_serialization)
@@ -772,6 +771,8 @@ namespace TCS
 		_MESSAGE("TCS: SetSaveCallback call completed");
 		g_serialization->SetPreloadCallback(g_pluginHandle, LoadCallback);
 		_MESSAGE("TCS: SetPreloadCallback call completed");
+		g_serialization->SetNewGameCallback(g_pluginHandle, NewGameCallback);
+		_MESSAGE("TCS: SetNewGameCallback call completed");
 	}
 
 }

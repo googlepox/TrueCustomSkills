@@ -2,7 +2,6 @@
 
 namespace TCS
 {
-
 	bool LooseTextureAssetExists(const std::string& relativePath)
 	{
 		if (relativePath.empty())
@@ -300,7 +299,6 @@ namespace TCS
 		}
 
 		g_menuQueInsertXML = reinterpret_cast<MenuQueInsertXMLFn>(reinterpret_cast<UInt8*>(menuQueModule) + kMenuQueInsertXMLRVA);
-		_MESSAGE("TCS: resolved MenuQue InsertXML at %p (module base %p)", (void*)g_menuQueInsertXML, (void*)menuQueModule);
 		return true;
 	}
 
@@ -347,8 +345,6 @@ namespace TCS
 
 		g_avTokenRegister = reinterpret_cast<UInt8*>(aavModule) + kAVTokenRegisterRVA;
 		g_avTokenLookupNext = reinterpret_cast<UInt8*>(aavModule) + kAVTokenLookupNextRVA;
-		_MESSAGE("TCS: resolved AVToken::Register at %p, LookupNext at %p (module base %p)",
-			g_avTokenRegister, g_avTokenLookupNext, (void*)aavModule);
 		return true;
 	}
 
@@ -533,7 +529,7 @@ namespace TCS
 			return nullptr;
 
 		void* record = *reinterpret_cast<void**>(reinterpret_cast<UInt8*>(outSlot) + 16);
-		if (!record || IsBadReadPtr(record, 9)) 
+		if (!record || IsBadReadPtr(record, 9))
 			return nullptr;
 
 		return record;
@@ -600,7 +596,7 @@ namespace TCS
 		return true;
 	}
 
-	static constexpr bool kEnableXSkillsProgressReconcile = false;
+	static constexpr bool kEnableXSkillsProgressReconcile = true;
 
 	bool ReadXSkillsProgress(UInt32 avCode, float& outProgress, float& outRequired)
 	{
@@ -610,43 +606,74 @@ namespace TCS
 		void* record = FindXSkillsRecordForAV(avCode);
 		if (!record)
 			return false;
-
 		if (IsBadReadPtr(record, kXSkillsRecordRequiredProgressOffset + 4))
 		{
 			_MESSAGE("TCS: ReadXSkillsProgress ABORT — record=%p fails extended-range IsBadReadPtr", record);
 			return false;
 		}
-		_MESSAGE("TCS: ReadXSkillsProgress record=%p for avCode=%08X", record, avCode);
 
-		auto resolveField = [](void* record, UInt32 fieldOffset, float& outValue) -> bool
+		auto resolveReadTarget = [](void* record, UInt32 fieldOffset, float& outValue) -> bool
 			{
 				const UInt32 rawField = *reinterpret_cast<UInt32*>(reinterpret_cast<UInt8*>(record) + fieldOffset);
-				void* asPointer = reinterpret_cast<void*>(rawField);
-				if (asPointer && !IsBadReadPtr(asPointer, 4))
-				{
-					outValue = *reinterpret_cast<float*>(asPointer);
-					return true;
-				}
-
-				outValue = *reinterpret_cast<float*>(reinterpret_cast<UInt8*>(record) + fieldOffset);
+				void* target = reinterpret_cast<void*>(rawField);
+				if (!target || IsBadReadPtr(target, sizeof(float)))
+					return false;
+				outValue = *reinterpret_cast<float*>(target);
 				return std::isfinite(outValue);
 			};
 
 		float progressValue = 0.0f, requiredValue = 0.0f;
-		const bool gotProgress = resolveField(record, kXSkillsRecordProgressOffset, progressValue);
-		const bool gotRequired = resolveField(record, kXSkillsRecordRequiredProgressOffset, requiredValue);
-		_MESSAGE("TCS: ReadXSkillsProgress step4 progress=%.2f (ok=%d) required=%.2f (ok=%d)",
-			progressValue, gotProgress ? 1 : 0, requiredValue, gotRequired ? 1 : 0);
-
-		if (!gotProgress || !gotRequired)
+		if (!resolveReadTarget(record, kXSkillsRecordProgressOffset, progressValue) ||
+			!resolveReadTarget(record, kXSkillsRecordRequiredProgressOffset, requiredValue))
 		{
-			_MESSAGE("TCS: ReadXSkillsProgress ABORT — could not resolve one or both fields to a sane value");
+			_MESSAGE("TCS: ReadXSkillsProgress ABORT — one or both fields are not valid read targets (avCode=%08X)", avCode);
 			return false;
 		}
 
 		outProgress = progressValue;
 		outRequired = requiredValue;
-		_MESSAGE("TCS: ReadXSkillsProgress step5 SUCCESS progress=%.2f required=%.2f", outProgress, outRequired);
+		return true;
+	}
+
+	bool WriteXSkillsProgress(UInt32 avCode, float progress, float required)
+	{
+		if (!kEnableXSkillsProgressReconcile)
+			return false;
+
+		if (!std::isfinite(progress) || progress < 0.0f || !std::isfinite(required) || required <= 0.0f)
+			return false;
+
+		void* record = FindXSkillsRecordForAV(avCode);
+		if (!record)
+			return false;
+		if (IsBadReadPtr(record, kXSkillsRecordRequiredProgressOffset + 4))
+		{
+			_MESSAGE("TCS: WriteXSkillsProgress ABORT — record=%p fails extended-range IsBadReadPtr", record);
+			return false;
+		}
+
+		auto resolveWriteTarget = [](void* record, UInt32 fieldOffset, float*& outTarget) -> bool
+			{
+				const UInt32 rawField = *reinterpret_cast<UInt32*>(reinterpret_cast<UInt8*>(record) + fieldOffset);
+				void* target = reinterpret_cast<void*>(rawField);
+				if (!target || IsBadWritePtr(target, sizeof(float)))
+					return false;
+				outTarget = reinterpret_cast<float*>(target);
+				return true;
+			};
+
+		float* progressTarget = nullptr;
+		float* requiredTarget = nullptr;
+		if (!resolveWriteTarget(record, kXSkillsRecordProgressOffset, progressTarget) ||
+			!resolveWriteTarget(record, kXSkillsRecordRequiredProgressOffset, requiredTarget))
+		{
+			_MESSAGE("TCS: WriteXSkillsProgress ABORT — one or both fields are not valid write targets (avCode=%08X)", avCode);
+			return false;
+		}
+
+		*progressTarget = progress;
+		*requiredTarget = required;
+		_MESSAGE("TCS: WriteXSkillsProgress SUCCESS avCode=%08X progress=%.2f required=%.2f", avCode, progress, required);
 		return true;
 	}
 

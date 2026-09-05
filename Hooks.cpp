@@ -61,7 +61,6 @@ namespace TCS
 			if (index < g_skillCount)
 			{
 				g_states[index].major = 1;
-
 				NormalizeState(index);
 				const UInt32 realLevel = GetRealAVLevel(index);
 				UInt32 base = g_states[index].level;
@@ -192,7 +191,7 @@ namespace TCS
 			mov eax, [esp + 4]
 			mov g_currentSkillsMenuOpenMode, eax
 			call LogSkillsMenuOpenMode
-			jmp dword ptr [g_skillsMenuOpenEntryOriginal]
+			jmp dword ptr[g_skillsMenuOpenEntryOriginal]
 		}
 	}
 
@@ -281,31 +280,72 @@ namespace TCS
 		return actorValue >= kFirstNativeSkillAV && actorValue <= kLastNativeSkillAV;
 	}
 
-	static void RepairClassPickerRowOrdering(void* skillsMenu, UInt32& outVisibleNativeCount)
+	struct PickerSortEntry
 	{
-		outVisibleNativeCount = 0;
+		const char* name;
+		Tile* nativeTile;
+		UInt32 ourIndex; 
+	};
+
+	static void UpdatePickerRow(void* skillsMenu, UInt32 index, UInt32 listIndex);
+
+	static void RepairClassPickerRowOrderingInterleaved(void* skillsMenu, UInt32& outCombinedCount)
+	{
+		outCombinedCount = 0;
 		Tile* listTile = GetSkillsMenuListTile(skillsMenu);
 		if (!listTile)
 			return;
 
 		static constexpr UInt32 kMaxNativeSkillRows = 21;
-		Tile* rows[kMaxNativeSkillRows] = {};
-		UInt32 count = 0;
+		static constexpr UInt32 kMaxCombinedEntries = kMaxNativeSkillRows + kMaxCustomSkills;
+		PickerSortEntry entries[kMaxCombinedEntries];
+		UInt32 entryCount = 0;
+
 		UInt32 node = *reinterpret_cast<UInt32*>(reinterpret_cast<UInt8*>(listTile) + 0x38);
-		while (node && count < kMaxNativeSkillRows)
+		while (node && entryCount < kMaxNativeSkillRows)
 		{
 			Tile* tile = *reinterpret_cast<Tile**>(node + 8);
 			UInt32 actorValue = 0xFFFFFFFF;
 			if (IsNativePickerSkillRow(tile, actorValue))
-				rows[count++] = tile;
-
+			{
+				const char* name = reinterpret_cast<ActorValueGetNameFn>(kActorValueGetName)(actorValue);
+				entries[entryCount].name = (name && name[0]) ? name : "";
+				entries[entryCount].nativeTile = tile;
+				entries[entryCount].ourIndex = 0;
+				++entryCount;
+			}
 			node = *reinterpret_cast<UInt32*>(node + 4);
 		}
 
-		for (UInt32 i = 0; i < count; ++i)
-			SetTileFloat(rows[i], kTileValue_listindex, static_cast<float>(i));
+		for (UInt32 i = 0; i < g_skillCount && entryCount < kMaxCombinedEntries; ++i)
+		{
+			entries[entryCount].name = g_skills[i].name.c_str();
+			entries[entryCount].nativeTile = nullptr;
+			entries[entryCount].ourIndex = i;
+			++entryCount;
+		}
 
-		outVisibleNativeCount = count;
+		for (UInt32 a = 1; a < entryCount; ++a)
+		{
+			const PickerSortEntry key = entries[a];
+			SInt32 b = static_cast<SInt32>(a) - 1;
+			while (b >= 0 && _stricmp(entries[b].name, key.name) > 0)
+			{
+				entries[b + 1] = entries[b];
+				--b;
+			}
+			entries[b + 1] = key;
+		}
+
+		for (UInt32 rank = 0; rank < entryCount; ++rank)
+		{
+			if (entries[rank].nativeTile)
+				SetTileFloat(entries[rank].nativeTile, kTileValue_listindex, static_cast<float>(rank));
+			else
+				UpdatePickerRow(skillsMenu, entries[rank].ourIndex, rank);
+		}
+
+		outCombinedCount = entryCount;
 	}
 
 	static UInt32 CountForeignSyntheticPickerRows(void* skillsMenu)
@@ -328,7 +368,7 @@ namespace TCS
 		return count;
 	}
 
-	static void RepairForeignSyntheticPickerOrdering(void* skillsMenu, UInt32 visibleNativeCount)
+	static void RepairForeignSyntheticPickerOrdering(void* skillsMenu, UInt32 combinedNativeAndOursCount)
 	{
 		Tile* listTile = GetSkillsMenuListTile(skillsMenu);
 		if (!listTile)
@@ -341,13 +381,13 @@ namespace TCS
 			Tile* tile = *reinterpret_cast<Tile**>(node + 8);
 			UInt32 skillId = 0;
 			if (TryGetForeignSyntheticPickerSkillId(tile, skillId))
-				SetTileFloat(tile, kTileValue_listindex, static_cast<float>(visibleNativeCount + foreignIndex++));
+				SetTileFloat(tile, kTileValue_listindex, static_cast<float>(combinedNativeAndOursCount + foreignIndex++));
 
 			node = *reinterpret_cast<UInt32*>(node + 4);
 		}
 	}
 
-	static void UpdatePickerRow(void* skillsMenu, UInt32 index, UInt32 visibleNativeCount, UInt32 foreignSyntheticCount)
+	static void UpdatePickerRow(void* skillsMenu, UInt32 index, UInt32 listIndex)
 	{
 		Tile* row = g_pickerRows[index].tile;
 		if (!row)
@@ -356,7 +396,7 @@ namespace TCS
 		SetTileFloat(row, kPickerRowSelectedTrait, 1.0f);
 		SetTileFloat(row, kPickerSyntheticSkillIdTrait, static_cast<float>(g_skills[index].skillId));
 		SetTileFloat(row, kPickerSyntheticMarkerTrait, 2.0f);
-		SetTileFloat(row, kTileValue_listindex, static_cast<float>(visibleNativeCount + foreignSyntheticCount + index));
+		SetTileFloat(row, kTileValue_listindex, static_cast<float>(listIndex));
 	}
 
 	static void SyncClassSkillPickerRows(void* skillsMenu)
@@ -373,20 +413,20 @@ namespace TCS
 			std::memset(g_pickerRows, 0, sizeof(g_pickerRows));
 		}
 
-		UInt32 visibleNativeCount = 0;
-		RepairClassPickerRowOrdering(skillsMenu, visibleNativeCount);
-		const UInt32 foreignSyntheticCount = CountForeignSyntheticPickerRows(skillsMenu);
-		RepairForeignSyntheticPickerOrdering(skillsMenu, visibleNativeCount);
 		SetSkillsMenuSelectionCap(skillsMenu, kNativeClassMajorCount);
 
 		for (UInt32 i = 0; i < g_skillCount; ++i)
 		{
 			if (!g_pickerRows[i].tile && !HasPickerRow(skillsMenu, i))
 				g_pickerRows[i].tile = CreateSyntheticSkillRow(skillsMenu, g_skills[i].name.c_str(), GetPickerRowPlaceholderAV(i));
-			UpdatePickerRow(skillsMenu, i, visibleNativeCount, foreignSyntheticCount);
 		}
 
-		_MESSAGE("TCS: synced picker rows native=%u foreign-synthetic=%u ours=%u", visibleNativeCount, foreignSyntheticCount, g_skillCount);
+		UInt32 combinedCount = 0;
+		RepairClassPickerRowOrderingInterleaved(skillsMenu, combinedCount);
+		const UInt32 foreignSyntheticCount = CountForeignSyntheticPickerRows(skillsMenu);
+		RepairForeignSyntheticPickerOrdering(skillsMenu, combinedCount);
+
+		_MESSAGE("TCS: synced picker rows combined-native-and-ours=%u foreign-synthetic=%u ours=%u", combinedCount, foreignSyntheticCount, g_skillCount);
 	}
 
 	static UInt32 g_skillsMenuPreselectOriginalTarget = kSkillsMenuPreselect;
@@ -538,7 +578,6 @@ namespace TCS
 		SkillsMenuDetailsOriginal()(skillsMenu, reinterpret_cast<void*>(explicitValue));
 
 		const UInt32 mode = GetSkillsMenuMode(skillsMenu);
-		_MESSAGE("TCS: HookSkillsMenuDetails called mode=%u explicitValue=%u", mode, explicitValue);
 
 		if (mode != 0)
 			return;
@@ -567,9 +606,7 @@ namespace TCS
 		}
 
 		const char* iconPath = GetSkillIconLarge(skillIndex);
-		char detailText[768] = {};
-		ComposeSkillDescriptionText(skillIndex, detailText, sizeof(detailText));
-		_MESSAGE("TCS: HookSkillsMenuDetails writing description=\"%s\" icon=\"%s\"", detailText, iconPath);
+		const char* detailText = g_skills[skillIndex].description.c_str();
 		SetTileString(detailsTile, kTileValue_user1, detailText);
 		SetTileString(detailsTile, kTileValue_user2, iconPath);
 	}
@@ -645,8 +682,6 @@ namespace TCS
 		if (!parent || skillCode == 0)
 			return nullptr;
 
-		_MESSAGE("TCS: FindXSkillsRowForSkill searching for skillCode=%u", skillCode);
-
 		UInt32 node = *reinterpret_cast<UInt32*>(reinterpret_cast<UInt8*>(parent) + 0x34);
 		while (node)
 		{
@@ -655,8 +690,6 @@ namespace TCS
 			{
 				const float rowValue = GetTileFloat(tile, kTileValue_user6);
 				const bool isMatch = std::isfinite(rowValue) && static_cast<UInt32>(rowValue + 0.5f) == static_cast<UInt32>(skillCode);
-				if (rowValue != 0.0f || isMatch)
-					_MESSAGE("TCS:   tile=%p user6=%.1f match=%d", (void*)tile, rowValue, isMatch ? 1 : 0);
 				if (isMatch)
 					return tile;
 			}
@@ -832,6 +865,8 @@ namespace TCS
 		SetTileFloat(tile, kStatsRowSyntheticMarkerTrait, 2.0f);
 	}
 
+	static StatsMenuRefreshFn StatsMenuRefreshOriginal();
+
 	static void SyncStatsMenuRows(void* statsMenu)
 	{
 		Tile* parent = GetStatsMenuSkillParent(statsMenu);
@@ -906,13 +941,21 @@ namespace TCS
 			if (g_postLoadPushCountdown[i] > 0 && g_skills[i].isOwnForm && g_skills[i].realActorValue != 0)
 			{
 				if (--g_postLoadPushCountdown[i] == 0)
+				{
 					ForceSetSkillLevelOnRealAV(i);
+					WriteXSkillsProgress(g_skills[i].realActorValue, g_states[i].progress, g_states[i].requiredProgress);
+
+					StatsMenuRefreshOriginal()(statsMenu, g_skills[i].realActorValue);
+				}
 			}
 
 			ReconcileSkillLevelWithRealAV(i);
 
+			if (g_skills[i].isOwnForm && g_postLoadPushCountdown[i] == 0)
+				ReconcileSkillProgressWithXSkills(i);
+
 			if (!g_states[i].major)
-				continue; 
+				continue;
 
 			const float order = static_cast<float>(nativeMajorCount + majorPlaced++);
 
@@ -920,8 +963,6 @@ namespace TCS
 			Tile* xSkillsRow = nullptr;
 			if (ReadXSkillsSkillCode(g_skills[i].realActorValue, skillCode))
 			{
-				_MESSAGE("TCS: resolved skillCode=%u for skillId=%u (realActorValue=%08X)",
-					skillCode, g_skills[i].skillId, g_skills[i].realActorValue);
 				xSkillsRow = FindXSkillsRowForSkill(parent, skillCode,
 					g_statsRows[i].isFallback ? g_statsRows[i].tile : nullptr);
 			}
@@ -930,7 +971,6 @@ namespace TCS
 			{
 				if (g_statsRows[i].tile && g_statsRows[i].isFallback && g_statsRows[i].tile != xSkillsRow)
 				{
-					_MESSAGE("TCS: xSkills' row appeared for major skillId=%u — retiring our earlier fallback row", g_skills[i].skillId);
 					SetTileFloat(g_statsRows[i].tile, kTileValue_listindex, 9999.0f);
 				}
 
@@ -948,7 +988,6 @@ namespace TCS
 
 				SetTileFloat(xSkillsRow, kStatsRowSyntheticSkillIdTrait, static_cast<float>(g_skills[i].skillId));
 				SetTileFloat(xSkillsRow, kStatsRowSyntheticMarkerTrait, 2.0f);
-				_MESSAGE("TCS: repositioned xSkills' own row for major skillId=%u order=%.1f tile=%p", g_skills[i].skillId, order, (void*)xSkillsRow);
 				continue;
 			}
 
@@ -964,7 +1003,6 @@ namespace TCS
 				_MESSAGE("TCS: failed to create StatsMenu row for skillId=%u", g_skills[i].skillId);
 				continue;
 			}
-			_MESSAGE("TCS: placing skillId=%u isMajor=1 order=%.1f (FALLBACK, own row — no xSkills row found)", g_skills[i].skillId, order);
 			UpdateStatsRowTile(i, g_statsRows[i].tile, order);
 		}
 
@@ -1014,13 +1052,9 @@ namespace TCS
 		{
 			if (g_skills[i].isOwnForm && g_skills[i].realActorValue == actorValue)
 			{
-				_MESSAGE("TCS: HookStatsMenuRefresh TRACE skillId=%u realActorValue=%08X currentLevel=%u (BEFORE original call)",
-					g_skills[i].skillId, actorValue, GetRealAVLevel(i));
 				break;
 			}
 		}
-
-		_MESSAGE("TCS: HookStatsMenuRefresh called actorValue=%08X", actorValue);
 
 		StatsMenuRefreshOriginal()(statsMenu, actorValue);
 
@@ -1028,8 +1062,6 @@ namespace TCS
 		{
 			if (g_skills[i].isOwnForm && g_skills[i].realActorValue == actorValue)
 			{
-				_MESSAGE("TCS: HookStatsMenuRefresh TRACE skillId=%u realActorValue=%08X currentLevel=%u (AFTER original call)",
-					g_skills[i].skillId, actorValue, GetRealAVLevel(i));
 				break;
 			}
 		}
@@ -1046,7 +1078,7 @@ namespace TCS
 
 	static void* g_originalTESSkillGetMasteryDescription = nullptr;
 
-	static const char* __fastcall HookTESSkillGetMasteryDescription(void* thisForm, void* edx, UInt32 masteryLevel)
+	static const char* __fastcall HookTESSkillGetMasteryDescription(void* thisForm, void* /*unused, absorbs EDX*/, UInt32 masteryLevel)
 	{
 		if (masteryLevel >= 1 && masteryLevel <= 4)
 		{
@@ -1058,7 +1090,6 @@ namespace TCS
 					const std::string& text = *masteryTexts[masteryLevel - 1];
 					if (!text.empty())
 					{
-						_MESSAGE("TCS: HookTESSkillGetMasteryDescription MATCH tier=%u skillId=%u", masteryLevel, g_skills[i].skillId);
 						return text.c_str();
 					}
 					break;
@@ -1068,7 +1099,7 @@ namespace TCS
 		return reinterpret_cast<TESSkillGetMasteryDescriptionFn>(g_originalTESSkillGetMasteryDescription)(thisForm, masteryLevel);
 	}
 
-	static const char* __fastcall HookTESDescriptionGetText(void* thisDescription, void* edx, TESForm* parentForm, UInt32 recordCode)
+	static const char* __fastcall HookTESDescriptionGetText(void* thisDescription, void* /*unused, absorbs EDX*/, TESForm* parentForm, UInt32 recordCode)
 	{
 		for (UInt32 i = 0; i < g_skillCount; ++i)
 		{
@@ -1078,7 +1109,6 @@ namespace TCS
 			UInt8* form = reinterpret_cast<UInt8*>(g_skills[i].xSkillsForm);
 			if (thisDescription == form + 0x18)
 			{
-				_MESSAGE("TCS: HookTESDescriptionGetText MATCH (main description) skillId=%u", g_skills[i].skillId);
 				return g_skills[i].description.c_str();
 			}
 
@@ -1093,10 +1123,8 @@ namespace TCS
 					matchedTier = true;
 					if (!masteryTexts[tier]->empty())
 					{
-						_MESSAGE("TCS: HookTESDescriptionGetText MATCH (mastery tier %u) skillId=%u", tier + 1, g_skills[i].skillId);
 						return masteryTexts[tier]->c_str();
 					}
-					_MESSAGE("TCS: HookTESDescriptionGetText matched mastery tier %u for skillId=%u but text is empty -- falling through", tier + 1, g_skills[i].skillId);
 					break;
 				}
 			}
@@ -1104,9 +1132,6 @@ namespace TCS
 			if (!matchedTier && thisDescription != form + 0x18)
 			{
 				const SInt32 deltaFromForm = static_cast<SInt32>(reinterpret_cast<UInt8*>(thisDescription) - form);
-				if (deltaFromForm >= 0 && deltaFromForm < 0x100)
-					_MESSAGE("TCS: HookTESDescriptionGetText unmatched thisDescription=%p for skillId=%u (delta from form=+0x%X)",
-						thisDescription, g_skills[i].skillId, deltaFromForm);
 			}
 		}
 		return reinterpret_cast<TESDescriptionGetTextFn>(g_originalTESDescriptionGetText)(thisDescription, parentForm, recordCode);
@@ -1114,16 +1139,11 @@ namespace TCS
 
 	static void __stdcall HandleStatsMenuDetails(void* statsMenu, UInt32 buttonId, Tile* selectedTile)
 	{
-		_MESSAGE("TCS: HandleStatsMenuDetails called statsMenu=%p buttonId=%u selectedTile=%p", statsMenu, buttonId, (void*)selectedTile);
-
 		if (buttonId != 0x22)
 			return;
 
 		const UInt32 index = FindStatsSkillIndexByTile(selectedTile);
-		_MESSAGE("TCS: HandleStatsMenuDetails index=%u g_skillCount=%u marker=%.1f skillIdTrait=%.1f",
-			index, g_skillCount,
-			selectedTile ? GetTileFloat(selectedTile, kStatsRowSyntheticMarkerTrait) : -999.0f,
-			selectedTile ? GetTileFloat(selectedTile, kStatsRowSyntheticSkillIdTrait) : -999.0f);
+
 		if (index >= g_skillCount)
 			return;
 
@@ -1140,7 +1160,6 @@ namespace TCS
 		char detailText[768] = {};
 		ComposeSkillDescriptionText(index, detailText, sizeof(detailText));
 
-		_MESSAGE("TCS: HandleStatsMenuDetails writing to detailTile=%p text=\"%s\"", (void*)detailTile, detailText);
 		SetTileFloat(detailTile, kTileValue_user4, 2.0f);
 		SetTileString(detailTile, kTileValue_user2, GetSkillIconLarge(index));
 		SetTileString(detailTile, kTileValue_user3, detailText);

@@ -307,7 +307,7 @@ namespace TCS
 		Tile* tile;
 	};
 
-	static constexpr const char* kSkillsDirectory = "Data\\OBSE\\Plugins\\TrueCustomSkills\\Skills\\";
+	static constexpr const char* kSkillsDirectory = "Data\\OBSE\\Plugins\\TrueCustomSkills\\";
 
 	using SkillsMenuPreselectFn = void(__thiscall*)(void* skillsMenu);
 
@@ -414,6 +414,7 @@ namespace TCS
 	extern void* g_xSkillsFormMap;
 	bool ResolveXSkillsFormMap();
 	bool ReadXSkillsProgress(UInt32 avCode, float& outProgress, float& outRequired);
+	bool WriteXSkillsProgress(UInt32 avCode, float progress, float required);
 	bool ReadXSkillsSkillCode(UInt32 avCode, UInt8& outSkillCode);
 	bool SetXSkillsGoverningAttributeAndSpecialization(UInt32 avCode, UInt32 governingAttribute, UInt32 specialization);
 	bool SetXSkillsIcon(UInt32 avCode, const std::string& iconPath);
