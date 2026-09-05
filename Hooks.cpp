@@ -844,6 +844,73 @@ namespace TCS
 		_MESSAGE("TCS: native row state nullRows=%u maxMinorListIndex=%.1f rows[i:listindex]=%s", nullRows, maxMinorListIndex, dump);
 	}
 
+	static void CompactMinorStatsRows(Tile* parent, UInt32 finalMajorCount)
+	{
+		if (!parent)
+			return;
+
+		const UInt32 minorStart = finalMajorCount + (finalMajorCount > 0 ? 1 : 0);
+
+		static constexpr UInt32 kMaxMinorRowsToCompact = 256;
+		Tile* minorTiles[kMaxMinorRowsToCompact];
+		float minorOrder[kMaxMinorRowsToCompact];
+		UInt32 minorCount = 0;
+
+		UInt32 node = *reinterpret_cast<UInt32*>(reinterpret_cast<UInt8*>(parent) + 0x34);
+		while (node)
+		{
+			Tile* tile = *reinterpret_cast<Tile**>(node + 8);
+			if (tile)
+			{
+				bool isOurMajor = false;
+				for (UInt32 i = 0; i < g_skillCount; ++i)
+				{
+					if (g_states[i].major && g_statsRows[i].tile == tile)
+					{
+						isOurMajor = true;
+						break;
+					}
+				}
+				if (!isOurMajor)
+				{
+					const float order = GetTileFloat(tile, kTileValue_listindex);
+					if (std::isfinite(order) && order >= static_cast<float>(minorStart) && minorCount < kMaxMinorRowsToCompact)
+					{
+						minorTiles[minorCount] = tile;
+						minorOrder[minorCount] = order;
+						++minorCount;
+					}
+				}
+			}
+			node = *reinterpret_cast<UInt32*>(node);
+		}
+
+		for (UInt32 a = 1; a < minorCount; ++a)
+		{
+			Tile* const keyTile = minorTiles[a];
+			const float keyOrder = minorOrder[a];
+			SInt32 b = static_cast<SInt32>(a) - 1;
+			while (b >= 0 && minorOrder[b] > keyOrder)
+			{
+				minorTiles[b + 1] = minorTiles[b];
+				minorOrder[b + 1] = minorOrder[b];
+				--b;
+			}
+			minorTiles[b + 1] = keyTile;
+			minorOrder[b + 1] = keyOrder;
+		}
+
+		for (UInt32 rank = 0; rank < minorCount; ++rank)
+		{
+			const float newOrder = static_cast<float>(minorStart + rank);
+			if (minorOrder[rank] != newOrder)
+			{
+				SetTileFloat(minorTiles[rank], kTileValue_listindex, newOrder);
+				SetTileFloat(minorTiles[rank], kTileValue_user0, newOrder);
+			}
+		}
+	}
+
 	static void UpdateStatsRowTile(UInt32 index, Tile* tile, float order)
 	{
 		if (!tile || index >= g_skillCount)
@@ -1009,6 +1076,8 @@ namespace TCS
 		const UInt32 finalMajorCount = nativeMajorCount + ourMajorCount;
 		if (ourMajorCount)
 			SetTileFloat(summary, kTileValue_user3, static_cast<float>(finalMajorCount));
+
+		CompactMinorStatsRows(parent, finalMajorCount);
 
 		if (Tile* pane = FindDescendantTileById(summary, kStatSkillWindowPaneId))
 		{
