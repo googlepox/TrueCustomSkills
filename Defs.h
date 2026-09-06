@@ -66,6 +66,10 @@ namespace TCS
 
 	static constexpr UInt32 kStatsMenuDetails = 0x005DBBD0;
 
+	static constexpr UInt32 kTESOnIdleIOManagerCallSite = 0x0040D8D8;
+
+	static constexpr UInt32 kIOManagerProcessThreads = 0x00433590;
+
 	static constexpr UInt32 kStatsMenuCreateRowsCall = 0x005DCCA3;
 
 	static constexpr UInt32 kStatsMenuRefreshCalls[] =
@@ -378,6 +382,7 @@ namespace TCS
 	static constexpr UInt32 kMenuQueInsertXMLRVA = 0x100040B0 - 0x10000000;
 
 	using StatsMenuCreateRowsFn = void(__thiscall*)(void* statsMenu);
+	using IOManagerProcessThreadsFn = void(__thiscall*)(void* ioManager);
 
 	using StatsMenuRefreshFn = void(__thiscall*)(void* statsMenu, UInt32 actorValue);
 
@@ -430,6 +435,7 @@ namespace TCS
 	void ForceSetSkillLevelOnRealAV(UInt32 index);
 	UInt32 GetRealAVLevel(UInt32 index);
 	void ReconcileSkillProgressWithXSkills(UInt32 index);
+	void ApplyMajorSpecializationScaling(UInt32 index);
 	void EnsureCustomActorValuesRegistered();
 	void LoadSkillDefinitionsFromDisk();
 	void RegisterSerializationCallbacks();

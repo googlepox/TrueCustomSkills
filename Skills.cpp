@@ -317,6 +317,62 @@ namespace TCS
 		}
 	}
 
+	static UInt32 GetPlayerClassSpecialization()
+	{
+		PlayerCharacter* player = GetPlayer();
+		if (!player)
+			return 0xFFFFFFFF;
+
+		TESClass* playerClass = player->GetPlayerClass();
+		if (!playerClass)
+			return 0xFFFFFFFF;
+
+		return playerClass->specialization;
+	}
+
+	static float g_lastCorrectedRequiredProgress[kMaxCustomSkills] = {};
+
+	void ApplyMajorSpecializationScaling(UInt32 index)
+	{
+		if (index >= g_skillCount || g_skills[index].realActorValue == 0)
+			return;
+
+		const bool isMajor = g_states[index].major != 0;
+		const UInt32 playerSpecialization = GetPlayerClassSpecialization();
+		const bool specializationMatches = (playerSpecialization != 0xFFFFFFFF) &&
+			(playerSpecialization == g_skills[index].specialization);
+
+		if (!isMajor && !specializationMatches)
+			return;
+
+		float multiplier = 1.0f;
+		if (specializationMatches)
+			multiplier *= 0.75f;
+		if (isMajor)
+			multiplier *= 0.6f;
+
+		float xProgress = 0.0f;
+		float xRequired = 0.0f;
+		if (!ReadXSkillsProgress(g_skills[index].realActorValue, xProgress, xRequired))
+			return;
+		if (!std::isfinite(xRequired) || xRequired <= 0.0f)
+			return;
+
+		if (xRequired == g_lastCorrectedRequiredProgress[index])
+			return;
+
+		const float correctedRequired = xRequired * multiplier;
+		if (!std::isfinite(correctedRequired) || correctedRequired <= 0.0f)
+			return;
+
+		if (WriteXSkillsProgress(g_skills[index].realActorValue, xProgress, correctedRequired))
+		{
+			g_lastCorrectedRequiredProgress[index] = correctedRequired;
+			_MESSAGE("TCS: ApplyMajorSpecializationScaling skillId=%u major=%d specializationMatch=%d multiplier=%.2f xSkillsRequired=%.2f -> corrected=%.2f",
+				g_skills[index].skillId, isMajor ? 1 : 0, specializationMatches ? 1 : 0, multiplier, xRequired, correctedRequired);
+		}
+	}
+
 	void EnsureCustomActorValuesRegistered()
 	{
 		for (UInt32 i = 0; i < g_skillCount; ++i)
@@ -453,7 +509,7 @@ namespace TCS
 		if (index >= g_skillCount)
 			return "";
 		const std::string& path = g_skills[index].iconLarge;
-		return LooseTextureAssetExists(path) ? path.c_str() : "";
+		return path.c_str();
 	}
 
 	const char* GetSkillIconSmall(UInt32 index)
@@ -461,9 +517,7 @@ namespace TCS
 		if (index >= g_skillCount)
 			return "";
 		const std::string& smallPath = g_skills[index].iconSmall;
-		if (LooseTextureAssetExists(smallPath))
-			return smallPath.c_str();
-		return GetSkillIconLarge(index);
+		return smallPath.c_str();
 	}
 
 	static const char* GetSafeActorValueName(UInt32 av)

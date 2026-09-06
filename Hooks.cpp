@@ -284,7 +284,7 @@ namespace TCS
 	{
 		const char* name;
 		Tile* nativeTile;
-		UInt32 ourIndex; 
+		UInt32 ourIndex;
 	};
 
 	static void UpdatePickerRow(void* skillsMenu, UInt32 index, UInt32 listIndex);
@@ -1094,6 +1094,8 @@ namespace TCS
 
 	static UInt32 g_statsMenuRefreshOriginalTarget = kStatsMenuRefresh;
 
+	static UInt32 g_ioManagerProcessThreadsOriginalTarget = kIOManagerProcessThreads;
+
 	static StatsMenuCreateRowsFn StatsMenuCreateRowsOriginal()
 	{
 		return reinterpret_cast<StatsMenuCreateRowsFn>(g_statsMenuCreateRowsOriginalTarget);
@@ -1102,6 +1104,21 @@ namespace TCS
 	static StatsMenuRefreshFn StatsMenuRefreshOriginal()
 	{
 		return reinterpret_cast<StatsMenuRefreshFn>(g_statsMenuRefreshOriginalTarget);
+	}
+
+	static IOManagerProcessThreadsFn IOManagerProcessThreadsOriginal()
+	{
+		return reinterpret_cast<IOManagerProcessThreadsFn>(g_ioManagerProcessThreadsOriginalTarget);
+	}
+
+	static void __fastcall HookIOManagerProcessThreads(void* ioManager, void*)
+	{
+		for (UInt32 i = 0; i < g_skillCount; ++i)
+		{
+			ApplyMajorSpecializationScaling(i);
+		}
+
+		IOManagerProcessThreadsOriginal()(ioManager);
 	}
 
 	static void __fastcall HookStatsMenuCreateRows(void* statsMenu, void*)
@@ -1337,6 +1354,12 @@ namespace TCS
 				kStatsMenuRefresh,
 				reinterpret_cast<UInt32>(&HookStatsMenuRefresh),
 				g_statsMenuRefreshOriginalTarget);
+
+		ok &= WriteRelCallChained("TES_OnIdle per-frame major/specialization scaling hook",
+			kTESOnIdleIOManagerCallSite,
+			kIOManagerProcessThreads,
+			reinterpret_cast<UInt32>(&HookIOManagerProcessThreads),
+			g_ioManagerProcessThreadsOriginalTarget);
 
 		ok &= InstallFunctionJumpHook("StatsMenu detail pane hook",
 			kStatsMenuDetails,
