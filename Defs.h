@@ -444,4 +444,11 @@ namespace TCS
 	UInt32 TCS_GetSkillLevel(const char* editorId);
 	bool TCS_IsSkillMajor(const char* editorId);
 	bool TCS_AddSkillXP(const char* editorId, float amount);
+	bool TCS_SetSkillLevel(const char* editorId, UInt32 level);
+	float TCS_GetSkillProgress(const char* editorId);
+	float TCS_GetSkillRequiredProgress(const char* editorId);
+	bool TCS_SetSkillProgress(const char* editorId, float progress);
+	UInt32 TCS_GetSkillLevelUps(const char* editorId);
+	UInt32 TCS_GetSkillGoverningAttributeIncreases(const char* editorId);
+	UInt32 TCS_GetSkillMastery(const char* editorId);
 }

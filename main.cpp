@@ -20,6 +20,13 @@ namespace TCS
 		&TCS_GetSkillLevel,
 		&TCS_IsSkillMajor,
 		&TCS_AddSkillXP,
+		&TCS_SetSkillLevel,
+		&TCS_GetSkillProgress,
+		&TCS_GetSkillRequiredProgress,
+		&TCS_SetSkillProgress,
+		&TCS_GetSkillLevelUps,
+		&TCS_GetSkillGoverningAttributeIncreases,
+		&TCS_GetSkillMastery,
 	};
 
 	static void MessageHandler(OBSEMessagingInterface::Message* message)

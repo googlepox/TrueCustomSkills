@@ -287,6 +287,8 @@ namespace TCS
 			const UInt32 previousLevel = state.level;
 			state.level = (avLevel > kMaxSkillLevel) ? kMaxSkillLevel : avLevel;
 			state.progress = 0.0f;
+			state.levelUps += (state.level - previousLevel);
+			state.governingAttributeIncreaseCount += (state.level - previousLevel);
 			ContributeMajorSkillAdvances(index, state.level - previousLevel);
 			ContributeAttributeBonusBucket(index, state.level - previousLevel);
 		}
@@ -926,6 +928,8 @@ namespace TCS
 		const UInt32 totalLevelUps = g_states[index].level - startingLevel;
 		if (totalLevelUps > 0)
 		{
+			g_states[index].levelUps += totalLevelUps;
+			g_states[index].governingAttributeIncreaseCount += totalLevelUps;
 			NotifyLevelIncrease(index, startingLevel, totalLevelUps);
 			ContributeMajorSkillAdvances(index, totalLevelUps);
 			ContributeAttributeBonusBucket(index, totalLevelUps);
@@ -938,6 +942,110 @@ namespace TCS
 				editorId, amount, startingLevel, g_states[index].level, xProgress, xRequired);
 		}
 		return wrote;
+	}
+
+	bool TCS_SetSkillLevel(const char* editorId, UInt32 level)
+	{
+		const UInt32 index = GetSkillIndexByEditorId(editorId);
+		if (index >= g_skillCount || !g_skills[index].isOwnForm || g_skills[index].realActorValue == 0)
+			return false;
+
+		if (level > kMaxSkillLevel)
+			level = kMaxSkillLevel;
+
+		const UInt32 previousLevel = g_states[index].level;
+		g_states[index].level = level;
+		ForceSetSkillLevelOnRealAV(index);
+
+		float xProgress = 0.0f;
+		float xRequired = 0.0f;
+		if (!ReadXSkillsProgress(g_skills[index].realActorValue, xProgress, xRequired) ||
+			!std::isfinite(xRequired) || xRequired <= 0.0f)
+		{
+			xRequired = 1.0f;
+		}
+
+		const bool wrote = WriteXSkillsProgress(g_skills[index].realActorValue, 0.0f, xRequired);
+
+		if (level > previousLevel)
+		{
+			const UInt32 levelUps = level - previousLevel;
+			g_states[index].levelUps += levelUps;
+			g_states[index].governingAttributeIncreaseCount += levelUps;
+			NotifyLevelIncrease(index, previousLevel, levelUps);
+			ContributeMajorSkillAdvances(index, levelUps);
+			ContributeAttributeBonusBucket(index, levelUps);
+		}
+
+		if (wrote)
+			_MESSAGE("TCS: TCS_SetSkillLevel editorId=\"%s\" level %u -> %u", editorId, previousLevel, level);
+		return wrote;
+	}
+
+	float TCS_GetSkillProgress(const char* editorId)
+	{
+		const UInt32 index = GetSkillIndexByEditorId(editorId);
+		if (index >= g_skillCount || !g_skills[index].isOwnForm || g_skills[index].realActorValue == 0)
+			return 0.0f;
+
+		float xProgress = 0.0f;
+		float xRequired = 0.0f;
+		if (!ReadXSkillsProgress(g_skills[index].realActorValue, xProgress, xRequired))
+			return 0.0f;
+		return xProgress;
+	}
+
+	float TCS_GetSkillRequiredProgress(const char* editorId)
+	{
+		const UInt32 index = GetSkillIndexByEditorId(editorId);
+		if (index >= g_skillCount || !g_skills[index].isOwnForm || g_skills[index].realActorValue == 0)
+			return 0.0f;
+
+		float xProgress = 0.0f;
+		float xRequired = 0.0f;
+		if (!ReadXSkillsProgress(g_skills[index].realActorValue, xProgress, xRequired))
+			return 0.0f;
+		return xRequired;
+	}
+
+	bool TCS_SetSkillProgress(const char* editorId, float progress)
+	{
+		if (!std::isfinite(progress) || progress < 0.0f)
+			return false;
+
+		const UInt32 index = GetSkillIndexByEditorId(editorId);
+		if (index >= g_skillCount || !g_skills[index].isOwnForm || g_skills[index].realActorValue == 0)
+			return false;
+
+		float xProgress = 0.0f;
+		float xRequired = 0.0f;
+		if (!ReadXSkillsProgress(g_skills[index].realActorValue, xProgress, xRequired) ||
+			!std::isfinite(xRequired) || xRequired <= 0.0f)
+		{
+			xRequired = 1.0f;
+		}
+
+		return WriteXSkillsProgress(g_skills[index].realActorValue, progress, xRequired);
+	}
+
+	UInt32 TCS_GetSkillLevelUps(const char* editorId)
+	{
+		const UInt32 index = GetSkillIndexByEditorId(editorId);
+		return (index < g_skillCount) ? g_states[index].levelUps : 0;
+	}
+
+	UInt32 TCS_GetSkillGoverningAttributeIncreases(const char* editorId)
+	{
+		const UInt32 index = GetSkillIndexByEditorId(editorId);
+		return (index < g_skillCount) ? g_states[index].governingAttributeIncreaseCount : 0;
+	}
+
+	UInt32 TCS_GetSkillMastery(const char* editorId)
+	{
+		const UInt32 index = GetSkillIndexByEditorId(editorId);
+		if (index >= g_skillCount)
+			return 0;
+		return GetSkillMasteryLevel(g_states[index].level);
 	}
 
 }
