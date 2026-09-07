@@ -113,6 +113,7 @@
     <ClInclude Include="..\obse\obse\GameAPI.h">
       <Filter>obse</Filter>
     </ClInclude>
+    <ClInclude Include="TrueCustomSkillsInterface.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\obse\obse\GameRTTI_1_2_416.inl">

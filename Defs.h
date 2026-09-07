@@ -438,4 +438,10 @@ namespace TCS
 	void EnsureCustomActorValuesRegistered();
 	void LoadSkillDefinitionsFromDisk();
 	void RegisterSerializationCallbacks();
+	UInt32 TCS_GetSkillActorValue(const char* editorId);
+	UInt8 TCS_GetSkillCode(const char* editorId);
+	bool TCS_IsTCSSkill(const char* editorId);
+	UInt32 TCS_GetSkillLevel(const char* editorId);
+	bool TCS_IsSkillMajor(const char* editorId);
+	bool TCS_AddSkillXP(const char* editorId, float amount);
 }

@@ -1,4 +1,5 @@
 #include "Defs.h"
+#include "TrueCustomSkillsInterface.h"
 #include "obse/CommandTable.h"
 #include "obse/ParamInfos.h"
 
@@ -9,6 +10,17 @@ OBSESerializationInterface* g_serialization = nullptr;
 
 namespace TCS
 {
+
+	static TrueCustomSkillsInterface g_tcsInterface =
+	{
+		TrueCustomSkillsInterface::kInterfaceVersion,
+		&TCS_GetSkillActorValue,
+		&TCS_GetSkillCode,
+		&TCS_IsTCSSkill,
+		&TCS_GetSkillLevel,
+		&TCS_IsSkillMajor,
+		&TCS_AddSkillXP,
+	};
 
 	static void MessageHandler(OBSEMessagingInterface::Message* message)
 	{
@@ -23,15 +35,29 @@ namespace TCS
 		}
 	}
 
+	static void InterfaceRequestHandler(OBSEMessagingInterface::Message* message)
+	{
+		if (!message || !message->data)
+			return;
+
+		if (message->type == kMessage_TCSGetInterface)
+		{
+			*reinterpret_cast<TrueCustomSkillsInterface**>(message->data) = &g_tcsInterface;
+		}
+	}
+
 	static void RegisterMessaging(const OBSEInterface* obse)
 	{
 		if (!obse || !obse->QueryInterface || g_pluginHandle == kPluginHandle_Invalid)
 			return;
 
-		OBSEMessagingInterface* messaging =
-			static_cast<OBSEMessagingInterface*>(obse->QueryInterface(kInterface_Messaging));
-		if (messaging && messaging->RegisterListener)
+		OBSEMessagingInterface* messaging = (OBSEMessagingInterface*)obse->QueryInterface(kInterface_Messaging);
+
+		if (messaging)
+		{
 			messaging->RegisterListener(g_pluginHandle, "OBSE", MessageHandler);
+			messaging->RegisterListener(g_pluginHandle, nullptr, InterfaceRequestHandler);
+		}
 	}
 
 	bool Cmd_GetTCSSkillCode_Execute(COMMAND_ARGS)
@@ -72,7 +98,7 @@ extern "C"
 			return false;
 
 		info->infoVersion = PluginInfo::kInfoVersion;
-		info->name = "True Custom Skills";
+		info->name = "TrueCustomSkills";
 		info->version = TCS::kPluginVersion;
 
 		if (obse->obseVersion < OBSE_VERSION_INTEGER)

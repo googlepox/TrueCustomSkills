@@ -138,6 +138,7 @@
     <ClCompile Include="main.cpp" />
     <ClCompile Include="Skills.cpp" />
     <ClCompile Include="Utility.cpp" />
+    <ClInclude Include="TrueCustomSkillsInterface.h" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\obse\obse\GameActorValues.h" />

@@ -502,6 +502,18 @@ namespace TCS
 		return 0xFFFFFFFF;
 	}
 
+	static UInt32 GetSkillIndexByEditorId(const char* editorId)
+	{
+		if (!editorId)
+			return 0xFFFFFFFF;
+		for (UInt32 i = 0; i < g_skillCount; ++i)
+		{
+			if (!_stricmp(g_skills[i].editorId.c_str(), editorId))
+				return i;
+		}
+		return 0xFFFFFFFF;
+	}
+
 	const char* GetSkillIconLarge(UInt32 index)
 	{
 		if (index >= g_skillCount)
@@ -640,7 +652,17 @@ namespace TCS
 			return false;
 
 		const char* icon = GetSkillIconLarge(index);
-		const char* description = g_skills[index].description.c_str();
+
+		const char* description = nullptr;
+		switch (mastery)
+		{
+		case 1: description = g_skills[index].apprenticeText.c_str(); break;
+		case 2: description = g_skills[index].journeymanText.c_str(); break;
+		case 3: description = g_skills[index].expertText.c_str(); break;
+		case 4: description = g_skills[index].masterText.c_str(); break;
+		default: return false;
+		}
+
 		if (!description || !description[0])
 			return false;
 
@@ -825,6 +847,97 @@ namespace TCS
 		_MESSAGE("TCS: SetPreloadCallback call completed");
 		g_serialization->SetNewGameCallback(g_pluginHandle, NewGameCallback);
 		_MESSAGE("TCS: SetNewGameCallback call completed");
+	}
+
+	UInt32 TCS_GetSkillActorValue(const char* editorId)
+	{
+		const UInt32 index = GetSkillIndexByEditorId(editorId);
+		return (index < g_skillCount) ? g_skills[index].realActorValue : 0;
+	}
+
+	UInt8 TCS_GetSkillCode(const char* editorId)
+	{
+		const UInt32 index = GetSkillIndexByEditorId(editorId);
+		if (index >= g_skillCount)
+			return 0;
+		UInt8 skillCode = 0;
+		ReadXSkillsSkillCode(g_skills[index].realActorValue, skillCode);
+		return skillCode;
+	}
+
+	bool TCS_IsTCSSkill(const char* editorId)
+	{
+		return GetSkillIndexByEditorId(editorId) < g_skillCount;
+	}
+
+	UInt32 TCS_GetSkillLevel(const char* editorId)
+	{
+		const UInt32 index = GetSkillIndexByEditorId(editorId);
+		return (index < g_skillCount) ? g_states[index].level : 0;
+	}
+
+	bool TCS_IsSkillMajor(const char* editorId)
+	{
+		const UInt32 index = GetSkillIndexByEditorId(editorId);
+		return (index < g_skillCount) && (g_states[index].major != 0);
+	}
+
+	bool TCS_AddSkillXP(const char* editorId, float amount)
+	{
+		if (!std::isfinite(amount) || amount <= 0.0f)
+			return false;
+
+		const UInt32 index = GetSkillIndexByEditorId(editorId);
+		if (index >= g_skillCount || !g_skills[index].isOwnForm || g_skills[index].realActorValue == 0)
+			return false;
+
+		float xProgress = 0.0f;
+		float xRequired = 0.0f;
+		if (!ReadXSkillsProgress(g_skills[index].realActorValue, xProgress, xRequired))
+			return false;
+		if (!std::isfinite(xProgress) || xProgress < 0.0f)
+			return false;
+		if (!std::isfinite(xRequired) || xRequired <= 0.0f)
+			return false;
+
+		const UInt32 startingLevel = g_states[index].level;
+		xProgress += amount;
+
+		UInt32 guard = 0;
+		while (g_states[index].level < kMaxSkillLevel && xProgress >= xRequired && guard < kMaxSkillLevel)
+		{
+			xProgress -= xRequired;
+			++g_states[index].level;
+			ForceSetSkillLevelOnRealAV(index);
+
+			float refreshedProgress = 0.0f;
+			float refreshedRequired = 0.0f;
+			if (ReadXSkillsProgress(g_skills[index].realActorValue, refreshedProgress, refreshedRequired) &&
+				std::isfinite(refreshedRequired) && refreshedRequired > 0.0f)
+			{
+				xRequired = refreshedRequired;
+			}
+			++guard;
+		}
+
+		if (g_states[index].level >= kMaxSkillLevel)
+			xProgress = 0.0f;
+
+		const UInt32 totalLevelUps = g_states[index].level - startingLevel;
+		if (totalLevelUps > 0)
+		{
+			NotifyLevelIncrease(index, startingLevel, totalLevelUps);
+			ContributeMajorSkillAdvances(index, totalLevelUps);
+			ContributeAttributeBonusBucket(index, totalLevelUps);
+		}
+
+		const bool wrote = WriteXSkillsProgress(g_skills[index].realActorValue, xProgress, xRequired);
+		if (wrote)
+		{
+			_MESSAGE("TCS: TCS_AddSkillXP editorId=\"%s\" amount=%.2f level %u -> %u progress=%.2f/%.2f",
+				editorId, amount, startingLevel, g_states[index].level, xProgress, xRequired);
+		}
+		return wrote;
 	}
 
 }
