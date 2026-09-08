@@ -59,6 +59,9 @@
     <ClCompile Include="..\obse\obse\GameAPI.cpp">
       <Filter>obse</Filter>
     </ClCompile>
+    <ClCompile Include="..\obse\obse\GameOSDepend.cpp">
+      <Filter>obse</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\obse\obse\GameActorValues.h">

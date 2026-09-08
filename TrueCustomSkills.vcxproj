@@ -117,6 +117,7 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">false</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="..\obse\obse\GameObjects.cpp" />
+    <ClCompile Include="..\obse\obse\GameOSDepend.cpp" />
     <ClCompile Include="..\obse\obse\GameTasks.cpp" />
     <ClCompile Include="..\obse\obse\GameTiles.cpp" />
     <ClCompile Include="..\obse\obse\GameTypes.cpp" />

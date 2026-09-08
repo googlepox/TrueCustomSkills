@@ -9,6 +9,7 @@
 #include "obse/FunctionScripts.h"
 #include "obse/GameProcess.h"
 #include "obse/GameTiles.h"
+#include "obse/GameOSDepend.h"
 #include "obse_common/SafeWrite.h"
 
 #include <cmath>
@@ -384,6 +385,13 @@ namespace TCS
 	using IOManagerProcessThreadsFn = void(__thiscall*)(void* ioManager);
 
 	using StatsMenuRefreshFn = void(__thiscall*)(void* statsMenu, UInt32 actorValue);
+
+	typedef void* (__thiscall* PlaySound_t)(
+		OSSoundGlobals* thisObj,
+		const char* soundName,
+		UInt32 arg2,
+		UInt32 arg3
+		);
 
 	extern SkillDefinition g_skills[kMaxCustomSkills];
 	extern UInt32 g_skillCount;

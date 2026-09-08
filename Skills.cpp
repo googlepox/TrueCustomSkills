@@ -681,6 +681,8 @@ namespace TCS
 			kGenericMenuArgEnd) != 0;
 	}
 
+	auto PlaySoundFn = reinterpret_cast<PlaySound_t>(0x006ADE50);
+
 	static void NotifyLevelIncrease(UInt32 index, UInt32 previousLevel, UInt32 levelUps)
 	{
 		if (!levelUps || index >= g_skillCount)
@@ -690,6 +692,15 @@ namespace TCS
 		_snprintf_s(message, sizeof(message), _TRUNCATE, "Your %s skill increased to %u.",
 			g_skills[index].name.c_str(), g_states[index].level);
 		::QueueUIMessage(message, 0, 1, 2.0f);
+
+		OSSoundGlobals* soundGlobals = (*g_osGlobals)->sound;
+		void* sound = PlaySoundFn(soundGlobals, "UIStatsSkillUp", 0x121, 1);
+		if (sound)
+		{
+			ThisStdCall(0x6B7190, sound, 0);
+			ThisStdCall(0x6B73E0, sound, 0);
+			FormHeap_Free(sound);
+		}
 
 		const UInt32 previousMastery = GetSkillMasteryLevel(previousLevel);
 		const UInt32 newMastery = GetSkillMasteryLevel(g_states[index].level);
