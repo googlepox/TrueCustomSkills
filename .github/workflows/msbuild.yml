@@ -41,5 +41,5 @@ jobs:
         with:
           name: TrueCustomSkills
           path: |
-            TrueCustomSkills/Release/*.dll
-            TrueCustomSkills/Release/*.pdb
+            TrueCustomSkills/Release/TrueCustomSkills.dll
+            TrueCustomSkills/Release/TrueCustomSkills.pdb
