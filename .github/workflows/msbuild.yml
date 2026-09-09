@@ -39,5 +39,7 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: plugin-dll
-          path: TrueCustomSkills/Release/*.dll
+          name: TrueCustomSkills
+          path: |
+            TrueCustomSkills/Release/*.dll
+            TrueCustomSkills/Release/*.pdb
