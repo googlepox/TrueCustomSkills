@@ -27,10 +27,10 @@ jobs:
         uses: microsoft/setup-msbuild@v2
 
       - name: Build
-        run: msbuild TrueCustomSkills/TrueCustomSkills.sln /p:Configuration=Debug /p:Platform=Win32 /m
+        run: msbuild TrueCustomSkills/TrueCustomSkills.slnx /p:Configuration=Release /p:Platform=Win32 /m
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: plugin-dll
-          path: TrueCustomSkills/Debug/*.dll
+          path: TrueCustomSkills/Release/*.dll
