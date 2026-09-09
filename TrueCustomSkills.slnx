@@ -2,5 +2,6 @@
   <Configurations>
     <Platform Name="x86" />
   </Configurations>
+  <Project Path="../common/common.vcxproj" Id="20c6411c-596f-4b85-be4e-8bc91f59d8a6" />
   <Project Path="TrueCustomSkills.vcxproj" Id="d4dda734-7e93-4581-8f82-32bb738f69fe" />
 </Solution>
