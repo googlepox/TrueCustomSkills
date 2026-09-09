@@ -18,6 +18,13 @@ jobs:
           repository: llde/xOBSE
           ref: master
 
+      - name: Checkout nlohmann/json
+        uses: actions/checkout@v4
+        with:
+          repository: nlohmann/json
+          ref: develop
+          path: nlohmann/json
+
       - name: Checkout plugin source
         uses: actions/checkout@v4
         with:
