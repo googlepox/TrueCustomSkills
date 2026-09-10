@@ -25,6 +25,19 @@ namespace TCS
 		return classMenu ? reinterpret_cast<UInt32*>(reinterpret_cast<UInt8*>(classMenu) + kClassMenuSelectedSkillsOffset) : nullptr;
 	}
 
+	static UInt32 GetPlayerRaceFormId()
+	{
+		PlayerCharacter* player = *g_thePlayer;
+		if (!player || !player->baseForm)
+			return 0;
+
+		TESNPC* npc = reinterpret_cast<TESNPC*>(player->baseForm);
+		if (!npc->race.race)
+			return 0;
+
+		return npc->race.race->refID;
+	}
+
 	static StagedMajorSelection g_stagedSelection = {};
 
 	static StagedSyntheticSelection g_stagedSynthetic = {};
@@ -1121,13 +1134,38 @@ namespace TCS
 		IOManagerProcessThreadsOriginal()(ioManager);
 	}
 
+	static TESQuest* GetMQ01()
+	{
+		TESForm* form = LookupFormByID(kMQ01FormId);
+		return (form && form->typeID == kFormType_Quest) ? reinterpret_cast<TESQuest*>(form) : nullptr;
+	}
+
+	static void CheckAndApplyRaceBonusOnce()
+	{
+		if (g_characterCreationBonusesApplied)
+			return;
+
+		TESQuest* mq01 = GetMQ01();
+		if (mq01 && mq01->IsCompleted())
+		{
+			g_characterCreationBonusesApplied = true;
+
+			ApplyRaceBonusesAtCharacterCreation(GetPlayerRaceFormId());
+			ApplyClassSpecializationBonusAtCharacterCreation();
+
+			_MESSAGE("TCS: race bonus one-shot applied (MQ01 stage=%u)", mq01->stageIndex);
+		}
+	}
+
 	static void __fastcall HookStatsMenuCreateRows(void* statsMenu, void*)
 	{
 		std::memset(g_statsRows, 0, sizeof(g_statsRows));
 		g_statsMenu = statsMenu;
 		StatsMenuCreateRowsOriginal()(statsMenu);
 
-		EnsureCustomActorValuesRegistered();
+		const bool linkedAnyThisCall = EnsureCustomActorValuesRegistered();
+		if (linkedAnyThisCall)
+			StatsMenuCreateRowsOriginal()(statsMenu);
 
 		SyncStatsMenuRows(statsMenu);
 	}
@@ -1151,6 +1189,8 @@ namespace TCS
 				break;
 			}
 		}
+
+		CheckAndApplyRaceBonusOnce();
 
 		RepositionDarNSkillPane(statsMenu, GetStatsMenuSummaryTile(statsMenu));
 

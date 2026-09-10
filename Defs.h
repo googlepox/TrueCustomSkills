@@ -20,6 +20,7 @@
 #include <cctype>
 #include <string>
 #include <fstream>
+#include <vector>
 #include <nlohmann/json.hpp>
 
 extern IDebugLog gLog;
@@ -33,6 +34,10 @@ namespace TCS
 	static constexpr UInt32 kSaveVersion = 3;
 
 	static constexpr UInt32 kRecordState = ('T') | ('C' << 8) | ('S' << 16) | ('S' << 24);
+
+	static constexpr UInt32 kRecordRaceBonusApplied = ('T') | ('C' << 8) | ('S' << 16) | ('R' << 24);
+	
+	static constexpr UInt32 kRaceBonusRecordVersion = 1;
 
 	static constexpr UInt32 kMaxSkillLevel = 100;
 	static constexpr float kProgressEpsilon = 0.0001f;
@@ -164,6 +169,10 @@ namespace TCS
 		kAVGroup__MAX = 0x7,
 	};
 
+	static constexpr UInt32 kMQ01FormId = 0x0001E723;
+
+	static bool g_characterCreationBonusesApplied = false;
+
 	static constexpr UInt32 kClassMenuTileOffset = 0x04;
 
 	static constexpr UInt32 kClassMenuSelectedClassOffset = 0x3C;
@@ -197,6 +206,13 @@ namespace TCS
 		kCustom = 2,
 	};
 
+	struct SkillRaceBonus
+	{
+		std::string sourceMod;
+		UInt32 objectId;
+		UInt32 bonus;
+	};
+
 	struct SkillDefinition
 	{
 		UInt32 skillId;
@@ -215,6 +231,7 @@ namespace TCS
 		std::string journeymanText;
 		std::string expertText;
 		std::string masterText;
+		std::vector<SkillRaceBonus> raceBonuses;
 	};
 
 	struct SkillState
@@ -443,9 +460,11 @@ namespace TCS
 	UInt32 GetRealAVLevel(UInt32 index);
 	void ReconcileSkillProgressWithXSkills(UInt32 index);
 	void ApplyMajorSpecializationScaling(UInt32 index);
-	void EnsureCustomActorValuesRegistered();
+	bool EnsureCustomActorValuesRegistered();
 	void LoadSkillDefinitionsFromDisk();
 	void RegisterSerializationCallbacks();
+	void ApplyRaceBonusesAtCharacterCreation(UInt32 raceFormId);
+	void ApplyClassSpecializationBonusAtCharacterCreation();
 	UInt32 TCS_GetSkillActorValue(const char* editorId);
 	UInt8 TCS_GetSkillCode(const char* editorId);
 	bool TCS_IsTCSSkill(const char* editorId);

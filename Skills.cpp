@@ -110,6 +110,29 @@ namespace TCS
 		return XPCurveMode::kVanilla;
 	}
 
+	static bool ParseRaceBonusKey(const std::string& key, std::string& outMod, UInt32& outObjectId)
+	{
+		const size_t sep = key.find('~');
+		if (sep == std::string::npos || sep == 0 || sep + 1 >= key.size())
+			return false;
+
+		std::string idPart = key.substr(0, sep);
+		outMod = key.substr(sep + 1);
+
+		if (idPart.size() > 1 && idPart[0] == '0' && (idPart[1] == 'x' || idPart[1] == 'X'))
+			idPart = idPart.substr(2);
+		if (idPart.empty())
+			return false;
+
+		char* end = nullptr;
+		const unsigned long parsed = std::strtoul(idPart.c_str(), &end, 16);
+		if (!end || *end)
+			return false;
+
+		outObjectId = static_cast<UInt32>(parsed) & 0x00FFFFFF;
+		return true;
+	}
+
 	static bool ParseSkillJSON(const std::string& filePath, SkillDefinition& outDef)
 	{
 		std::ifstream file(filePath);
@@ -150,6 +173,38 @@ namespace TCS
 		outDef.journeymanText = j.value("journeymanText", std::string(""));
 		outDef.expertText = j.value("expertText", std::string(""));
 		outDef.masterText = j.value("masterText", std::string(""));
+		outDef.raceBonuses.clear();
+		if (j.contains("raceBonuses") && j["raceBonuses"].is_object())
+		{
+			for (auto it = j["raceBonuses"].begin(); it != j["raceBonuses"].end(); ++it)
+			{
+				if (!it.value().is_number_integer() && !it.value().is_number_unsigned())
+				{
+					_MESSAGE("TCS: skill \"%s\" raceBonuses[\"%s\"] is not an integer, skipping",
+						editorId.c_str(), it.key().c_str());
+					continue;
+				}
+
+				std::string sourceMod;
+				UInt32 objectId = 0;
+				if (!ParseRaceBonusKey(it.key(), sourceMod, objectId))
+				{
+					_MESSAGE("TCS: skill \"%s\" raceBonuses key \"%s\" is malformed (expected \"0xFFFFFF~ModName.esp\"), skipping",
+						editorId.c_str(), it.key().c_str());
+					continue;
+				}
+
+				const SInt32 rawValue = it.value().get<SInt32>();
+				if (rawValue < 0)
+				{
+					_MESSAGE("TCS: skill \"%s\" raceBonuses[\"%s\"] is negative, skipping",
+						editorId.c_str(), it.key().c_str());
+					continue;
+				}
+
+				outDef.raceBonuses.push_back({ sourceMod, objectId, static_cast<UInt32>(rawValue) });
+			}
+		}
 		return true;
 	}
 
@@ -333,6 +388,7 @@ namespace TCS
 	}
 
 	static float g_lastCorrectedRequiredProgress[kMaxCustomSkills] = {};
+	static float g_lastLoggedRawRequiredProgress[kMaxCustomSkills] = {};
 
 	void ApplyMajorSpecializationScaling(UInt32 index)
 	{
@@ -340,18 +396,10 @@ namespace TCS
 			return;
 
 		const bool isMajor = g_states[index].major != 0;
-		const UInt32 playerSpecialization = GetPlayerClassSpecialization();
-		const bool specializationMatches = (playerSpecialization != 0xFFFFFFFF) &&
-			(playerSpecialization == g_skills[index].specialization);
-
-		if (!isMajor && !specializationMatches)
+		if (!isMajor)
 			return;
 
-		float multiplier = 1.0f;
-		if (specializationMatches)
-			multiplier *= 0.75f;
-		if (isMajor)
-			multiplier *= 0.6f;
+		constexpr float kMajorMultiplier = 0.6f;
 
 		float xProgress = 0.0f;
 		float xRequired = 0.0f;
@@ -363,20 +411,105 @@ namespace TCS
 		if (xRequired == g_lastCorrectedRequiredProgress[index])
 			return;
 
-		const float correctedRequired = xRequired * multiplier;
+		const float correctedRequired = xRequired * kMajorMultiplier;
 		if (!std::isfinite(correctedRequired) || correctedRequired <= 0.0f)
 			return;
 
 		if (WriteXSkillsProgress(g_skills[index].realActorValue, xProgress, correctedRequired))
 		{
 			g_lastCorrectedRequiredProgress[index] = correctedRequired;
-			_MESSAGE("TCS: ApplyMajorSpecializationScaling skillId=%u major=%d specializationMatch=%d multiplier=%.2f xSkillsRequired=%.2f -> corrected=%.2f",
-				g_skills[index].skillId, isMajor ? 1 : 0, specializationMatches ? 1 : 0, multiplier, xRequired, correctedRequired);
 		}
 	}
 
-	void EnsureCustomActorValuesRegistered()
+	static bool ResolveRaceBonusFormId(const SkillRaceBonus& entry, UInt32& outFormId)
 	{
+		outFormId = 0;
+		if (!g_dataHandler || !*g_dataHandler)
+			return false;
+
+		const UInt8 modIndex = (*g_dataHandler)->GetModIndex(entry.sourceMod.c_str());
+		if (modIndex == 0xFF)
+			return false;
+
+		outFormId = (static_cast<UInt32>(modIndex) << 24) | (entry.objectId & 0x00FFFFFF);
+		return true;
+	}
+
+	static UInt32 GetRaceBonusForSkill(UInt32 index, UInt32 raceFormId)
+	{
+		if (index >= g_skillCount || !raceFormId)
+			return 0;
+
+		for (const SkillRaceBonus& entry : g_skills[index].raceBonuses)
+		{
+			UInt32 resolvedFormId = 0;
+			if (ResolveRaceBonusFormId(entry, resolvedFormId) && resolvedFormId == raceFormId)
+				return entry.bonus;
+		}
+		return 0;
+	}
+
+	void ApplyRaceBonusesAtCharacterCreation(UInt32 raceFormId)
+	{
+		if (!raceFormId)
+			return;
+
+		for (UInt32 i = 0; i < g_skillCount; ++i)
+		{
+			const UInt32 bonus = GetRaceBonusForSkill(i, raceFormId);
+			if (!bonus)
+				continue;
+
+			NormalizeState(i);
+			SkillState& state = g_states[i];
+			const UInt32 previousLevel = state.level;
+			const UInt32 newLevel = state.level + bonus;
+			state.level = (newLevel > kMaxSkillLevel) ? kMaxSkillLevel : newLevel;
+
+			_MESSAGE("TCS: race bonus applied skillId=%u raceFormId=%08X bonus=%u level %u -> %u",
+				g_skills[i].skillId, raceFormId, bonus, previousLevel, state.level);
+
+			if (g_skills[i].isOwnForm && g_skills[i].realActorValue != 0)
+				PushSkillLevelToRealAV(i);
+		}
+	}
+
+
+	void ApplyClassSpecializationBonusAtCharacterCreation()
+	{
+		PlayerCharacter* player = *g_thePlayer;
+		if (!player || !player->baseForm)
+			return;
+
+		TESNPC* npc = reinterpret_cast<TESNPC*>(player->baseForm);
+		TESClass* npcClass = npc->npcClass;
+		if (!npcClass)
+			return;
+
+		const UInt32 classSpecialization = npcClass->specialization;
+
+		for (UInt32 i = 0; i < g_skillCount; ++i)
+		{
+			if (g_skills[i].specialization != classSpecialization || !g_skills[i].isOwnForm)
+				continue;
+
+			NormalizeState(i);
+			SkillState& state = g_states[i];
+			const UInt32 previousLevel = state.level;
+			const UInt32 newLevel = state.level + 5;
+			state.level = (newLevel > kMaxSkillLevel) ? kMaxSkillLevel : newLevel;
+
+			_MESSAGE("TCS: specialization bonus applied skillId=%u classSpecialization=%u level %u -> %u",
+				g_skills[i].skillId, classSpecialization, previousLevel, state.level);
+
+			if (g_skills[i].isOwnForm && g_skills[i].realActorValue != 0)
+				PushSkillLevelToRealAV(i);
+		}
+	}
+
+	bool EnsureCustomActorValuesRegistered()
+	{
+		bool linkedAny = false;
 		for (UInt32 i = 0; i < g_skillCount; ++i)
 		{
 			if (g_skills[i].realActorValue != 0)
@@ -387,6 +520,8 @@ namespace TCS
 
 			if (g_skills[i].realActorValue == 0)
 				continue;
+
+			linkedAny = true;
 
 			if (wasReused)
 			{
@@ -427,6 +562,8 @@ namespace TCS
 				_MESSAGE("TCS: captured xSkillsForm=%p for \"%s\"", g_skills[i].xSkillsForm, g_skills[i].name.c_str());
 			}
 		}
+
+		return linkedAny;
 	}
 
 	void LoadSkillDefinitionsFromDisk()
@@ -441,7 +578,6 @@ namespace TCS
 		if (findHandle == INVALID_HANDLE_VALUE)
 		{
 			_MESSAGE("TCS: no skill files found in %s (missing folder, or genuinely empty)", kSkillsDirectory);
-			EnsureDummySkillRegistered();
 			return;
 		}
 
@@ -782,6 +918,16 @@ namespace TCS
 			_MESSAGE("TCS: SaveCallback wrote skillId=%u major=%u level=%u", g_skills[i].skillId, g_states[i].major, g_states[i].level);
 		}
 		_MESSAGE("TCS: SaveCallback wrote %u skill state(s)", g_skillCount);
+
+		if (g_serialization->OpenRecord(kRecordRaceBonusApplied, kRaceBonusRecordVersion))
+		{
+			g_serialization->WriteRecordData(&g_characterCreationBonusesApplied, sizeof(g_characterCreationBonusesApplied));
+			_MESSAGE("TCS: SaveCallback wrote raceBonusApplied=%d", g_characterCreationBonusesApplied ? 1 : 0);
+		}
+		else
+		{
+			_MESSAGE("TCS: SaveCallback failed to open raceBonusApplied record");
+		}
 	}
 
 	static void LoadCallback(void*)
@@ -799,6 +945,18 @@ namespace TCS
 		{
 			_MESSAGE("TCS: LoadCallback saw record type=%08X version=%u length=%u (expected type=%08X version=%u)",
 				type, version, length, kRecordState, kSaveVersion);
+
+			if (type == kRecordRaceBonusApplied)
+			{
+				bool savedFlag = false;
+				if (g_serialization->ReadRecordData(&savedFlag, sizeof(savedFlag)) == sizeof(savedFlag))
+				{
+					g_characterCreationBonusesApplied = savedFlag;
+					_MESSAGE("TCS: LoadCallback read raceBonusApplied=%d", g_characterCreationBonusesApplied ? 1 : 0);
+				}
+				continue;
+			}
+
 			if (type != kRecordState || version != kSaveVersion)
 				continue;
 			foundRecord = true;
@@ -904,55 +1062,45 @@ namespace TCS
 		if (index >= g_skillCount || !g_skills[index].isOwnForm || g_skills[index].realActorValue == 0)
 			return false;
 
-		float xProgress = 0.0f;
-		float xRequired = 0.0f;
-		if (!ReadXSkillsProgress(g_skills[index].realActorValue, xProgress, xRequired))
-			return false;
-		if (!std::isfinite(xProgress) || xProgress < 0.0f)
-			return false;
-		if (!std::isfinite(xRequired) || xRequired <= 0.0f)
+		PlayerCharacter* player = GetPlayer();
+		if (!player)
 			return false;
 
-		const UInt32 startingLevel = g_states[index].level;
-		xProgress += amount;
+		typedef void(__thiscall* PlayerModExperienceFn)(PlayerCharacter* thePlayer, UInt32 actorValue, UInt32 useType, float multiplier);
+		const UInt32 vtable = *reinterpret_cast<const UInt32*>(player);
+		PlayerModExperienceFn fn = *reinterpret_cast<PlayerModExperienceFn*>(vtable + 0x39C);
 
-		UInt32 guard = 0;
-		while (g_states[index].level < kMaxSkillLevel && xProgress >= xRequired && guard < kMaxSkillLevel)
+		constexpr UInt32 kUseType = 0;
+		const UInt32 startingLevel = static_cast<UInt32>(player->GetAV_F(g_skills[index].realActorValue) + 0.5f);
+
+		const UInt32 majorSkillAdvancesBefore = player->majorSkillAdvances;
+
+		fn(player, g_skills[index].realActorValue, kUseType, amount);
+
+		const UInt32 majorSkillAdvancesAfter = player->majorSkillAdvances;
+		if (majorSkillAdvancesAfter != majorSkillAdvancesBefore)
 		{
-			xProgress -= xRequired;
-			++g_states[index].level;
-			ForceSetSkillLevelOnRealAV(index);
-
-			float refreshedProgress = 0.0f;
-			float refreshedRequired = 0.0f;
-			if (ReadXSkillsProgress(g_skills[index].realActorValue, refreshedProgress, refreshedRequired) &&
-				std::isfinite(refreshedRequired) && refreshedRequired > 0.0f)
-			{
-				xRequired = refreshedRequired;
-			}
-			++guard;
+			_MESSAGE("TCS: DEBUG TCS_AddSkillXP majorSkillAdvances changed by the engine call itself: before=%u after=%u (BEFORE our own ContributeMajorSkillAdvances/ContributeAttributeBonusBucket run) -- if this fires, those calls are likely now redundant",
+				majorSkillAdvancesBefore, majorSkillAdvancesAfter);
 		}
 
-		if (g_states[index].level >= kMaxSkillLevel)
-			xProgress = 0.0f;
+		const UInt32 newLevel = static_cast<UInt32>(player->GetAV_F(g_skills[index].realActorValue) + 0.5f);
+		float xProgress = 0.0f, xRequired = 0.0f;
+		const bool readOk = ReadXSkillsProgress(g_skills[index].realActorValue, xProgress, xRequired);
 
-		const UInt32 totalLevelUps = g_states[index].level - startingLevel;
-		if (totalLevelUps > 0)
+		if (newLevel != g_states[index].level)
+			g_states[index].level = newLevel;
+
+		if (newLevel > startingLevel)
 		{
-			g_states[index].levelUps += totalLevelUps;
-			g_states[index].governingAttributeIncreaseCount += totalLevelUps;
-			NotifyLevelIncrease(index, startingLevel, totalLevelUps);
-			ContributeMajorSkillAdvances(index, totalLevelUps);
-			ContributeAttributeBonusBucket(index, totalLevelUps);
+			const UInt32 levelUps = newLevel - startingLevel;
+			g_states[index].levelUps += levelUps;
+			g_states[index].governingAttributeIncreaseCount += levelUps;
+			ContributeMajorSkillAdvances(index, levelUps);
+			ContributeAttributeBonusBucket(index, levelUps);
 		}
 
-		const bool wrote = WriteXSkillsProgress(g_skills[index].realActorValue, xProgress, xRequired);
-		if (wrote)
-		{
-			_MESSAGE("TCS: TCS_AddSkillXP editorId=\"%s\" amount=%.2f level %u -> %u progress=%.2f/%.2f",
-				editorId, amount, startingLevel, g_states[index].level, xProgress, xRequired);
-		}
-		return wrote;
+		return true;
 	}
 
 	bool TCS_SetSkillLevel(const char* editorId, UInt32 level)
