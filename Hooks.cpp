@@ -1182,6 +1182,13 @@ namespace TCS
 				}
 			}
 		}
+
+		_MESSAGE(
+			"CSF: TESSkillGetMasteryDescription fallback this=%08X mastery=%u original=%08X",
+			reinterpret_cast<UInt32>(thisForm),
+			masteryLevel,
+			reinterpret_cast<UInt32>(g_originalTESSkillGetMasteryDescription)
+		);
 		return reinterpret_cast<TESSkillGetMasteryDescriptionFn>(g_originalTESSkillGetMasteryDescription)(thisForm, masteryLevel);
 	}
 

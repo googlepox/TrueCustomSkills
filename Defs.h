@@ -134,12 +134,11 @@ namespace TCS
 	using TESDescriptionGetTextFn = const char* (__thiscall*)(void* thisDescription, TESForm* parentForm, UInt32 recordCode);
 
 	static constexpr UInt32 kTESSkillGetMasteryDescription = 0x0052EAB0;
-	static constexpr UInt32 kTESSkillGetMasteryDescriptionPatchLength = 8;
+	static constexpr UInt32 kTESSkillGetMasteryDescriptionPatchLength = 6;
 	static const UInt8 kTESSkillGetMasteryDescriptionExpected[kTESSkillGetMasteryDescriptionPatchLength] =
 	{
 		0x8B, 0x54, 0x24, 0x04, // mov edx, [esp+4]
 		0x85, 0xD2,             // test edx, edx
-		0x75, 0x08,             // jnz short +8
 	};
 	using TESSkillGetMasteryDescriptionFn = const char* (__thiscall*)(void* thisForm, UInt32 masteryLevel);
 
