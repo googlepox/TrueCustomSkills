@@ -107,7 +107,9 @@ extern "C"
 		info->infoVersion = PluginInfo::kInfoVersion;
 		info->name = "TrueCustomSkills";
 		info->version = TCS::kPluginVersion;
-
+		
+		if (obse->isEditor)
+			return true;
 		if (obse->obseVersion < OBSE_VERSION_INTEGER)
 			return false;
 		if (obse->oblivionVersion != OBLIVION_VERSION)
