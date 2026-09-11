@@ -1248,6 +1248,12 @@ namespace TCS
 		return reinterpret_cast<TESSkillGetMasteryDescriptionFn>(g_originalTESSkillGetMasteryDescription)(thisForm, masteryLevel);
 	}
 
+	static constexpr UInt32 kRecordCode_DESC = ('D') | ('E' << 8) | ('S' << 16) | ('C' << 24);
+	static constexpr UInt32 kRecordCode_ANAM = ('A') | ('N' << 8) | ('A' << 16) | ('M' << 24);
+	static constexpr UInt32 kRecordCode_JNAM = ('J') | ('N' << 8) | ('A' << 16) | ('M' << 24);
+	static constexpr UInt32 kRecordCode_ENAM = ('E') | ('N' << 8) | ('A' << 16) | ('M' << 24);
+	static constexpr UInt32 kRecordCode_MNAM = ('M') | ('N' << 8) | ('A' << 16) | ('M' << 24);
+
 	static const char* __fastcall HookTESDescriptionGetText(void* thisDescription, void* /*unused, absorbs EDX*/, TESForm* parentForm, UInt32 recordCode)
 	{
 		for (UInt32 i = 0; i < g_classOverrideCount; ++i)
@@ -1266,31 +1272,26 @@ namespace TCS
 				continue;
 
 			UInt8* form = reinterpret_cast<UInt8*>(g_skills[i].xSkillsForm);
+			const std::string* masteryTexts[4] = { &g_skills[i].apprenticeText, &g_skills[i].journeymanText, &g_skills[i].expertText, &g_skills[i].masterText };
+
 			if (thisDescription == form + 0x18)
 			{
-				return g_skills[i].description.c_str();
+				switch (recordCode)
+				{
+				case kRecordCode_ANAM: return masteryTexts[0]->empty() ? "" : masteryTexts[0]->c_str();
+				case kRecordCode_JNAM: return masteryTexts[1]->empty() ? "" : masteryTexts[1]->c_str();
+				case kRecordCode_ENAM: return masteryTexts[2]->empty() ? "" : masteryTexts[2]->c_str();
+				case kRecordCode_MNAM: return masteryTexts[3]->empty() ? "" : masteryTexts[3]->c_str();
+				default: return g_skills[i].description.c_str();
+				}
 			}
 
 			static constexpr UInt32 kLevelQuoteOffset = 0x40;
 			static constexpr UInt32 kLevelQuoteStride = 8;
-			const std::string* masteryTexts[4] = { &g_skills[i].apprenticeText, &g_skills[i].journeymanText, &g_skills[i].expertText, &g_skills[i].masterText };
-			bool matchedTier = false;
 			for (UInt32 tier = 0; tier < 4; ++tier)
 			{
 				if (thisDescription == form + kLevelQuoteOffset + kLevelQuoteStride * tier)
-				{
-					matchedTier = true;
-					if (!masteryTexts[tier]->empty())
-					{
-						return masteryTexts[tier]->c_str();
-					}
-					break;
-				}
-			}
-
-			if (!matchedTier && thisDescription != form + 0x18)
-			{
-				const SInt32 deltaFromForm = static_cast<SInt32>(reinterpret_cast<UInt8*>(thisDescription) - form);
+					return masteryTexts[tier]->empty() ? "" : masteryTexts[tier]->c_str();
 			}
 		}
 		return reinterpret_cast<TESDescriptionGetTextFn>(g_originalTESDescriptionGetTextSkill)(thisDescription, parentForm, recordCode);
