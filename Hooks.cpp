@@ -961,6 +961,9 @@ namespace TCS
 
 	static void SyncStatsMenuRows(void* statsMenu)
 	{
+		if (!g_customActorValuesEverRegistered)
+			return;
+
 		Tile* parent = GetStatsMenuSkillParent(statsMenu);
 		Tile* summary = GetStatsMenuSummaryTile(statsMenu);
 		if (!parent || !summary)

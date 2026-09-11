@@ -779,6 +779,8 @@ namespace TCS
 
 	bool EnsureCustomActorValuesRegistered()
 	{
+		g_customActorValuesEverRegistered = true;
+
 		bool linkedAny = false;
 		for (UInt32 i = 0; i < g_skillCount; ++i)
 		{

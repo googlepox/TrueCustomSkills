@@ -64,6 +64,8 @@ namespace TCS
 
 	static constexpr UInt32 kSentinelMajorAV = 0xFFFFFFFF;
 
+	inline bool g_customActorValuesEverRegistered = false;
+
 	static constexpr UInt32 kClassMenuCommit = 0x005973F0;
 
 	static constexpr UInt32 kClassMenuCommitPremade = 0x00596A00;
