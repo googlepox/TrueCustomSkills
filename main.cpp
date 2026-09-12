@@ -7,6 +7,7 @@ IDebugLog gLog("TrueCustomSkills.log");
 
 PluginHandle g_pluginHandle = kPluginHandle_Invalid;
 OBSESerializationInterface* g_serialization = nullptr;
+OBSEMessagingInterface* g_messaging = nullptr;
 
 namespace TCS
 {
@@ -29,6 +30,14 @@ namespace TCS
 		&TCS_GetSkillMastery,
 	};
 
+	static void UnifiedMessageHandler(OBSEMessagingInterface::Message* message)
+	{
+		if (!message || !message->data)
+			return;
+
+		EditorIDMapper::MessageHandler(message);
+	}
+
 	static void MessageHandler(OBSEMessagingInterface::Message* message)
 	{
 		if (!message)
@@ -40,6 +49,12 @@ namespace TCS
 			if (!InstallHooks())
 				_ERROR("TCS: failed to install native hooks");
 		}
+		else if (message->type == OBSEMessagingInterface::kMessage_GameInitialized)
+		{
+			g_messaging->RegisterListener(g_pluginHandle, "EditorIDMapper", UnifiedMessageHandler);
+		}
+		else if (message->type == OBSEMessagingInterface::kMessage_PostLoadGame)
+			TCS::LoadClassDefinitionsFromDisk();
 	}
 
 	static void InterfaceRequestHandler(OBSEMessagingInterface::Message* message)
@@ -58,12 +73,12 @@ namespace TCS
 		if (!obse || !obse->QueryInterface || g_pluginHandle == kPluginHandle_Invalid)
 			return;
 
-		OBSEMessagingInterface* messaging = (OBSEMessagingInterface*)obse->QueryInterface(kInterface_Messaging);
+		g_messaging = (OBSEMessagingInterface*)obse->QueryInterface(kInterface_Messaging);
 
-		if (messaging)
+		if (g_messaging)
 		{
-			messaging->RegisterListener(g_pluginHandle, "OBSE", MessageHandler);
-			messaging->RegisterListener(g_pluginHandle, nullptr, InterfaceRequestHandler);
+			g_messaging->RegisterListener(g_pluginHandle, "OBSE", MessageHandler);
+			g_messaging->RegisterListener(g_pluginHandle, nullptr, InterfaceRequestHandler);
 		}
 	}
 
@@ -130,6 +145,7 @@ extern "C"
 
 		if (!obse->isEditor)
 		{
+			EditorIDMapper::Init((OBSEMessagingInterface*)obse->QueryInterface(kInterface_Messaging), g_pluginHandle);
 			TCS::RegisterSerializationCallbacks();
 			TCS::RegisterMessaging(obse);
 		}

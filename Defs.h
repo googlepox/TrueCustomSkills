@@ -12,6 +12,8 @@
 #include "obse/GameOSDepend.h"
 #include "obse_common/SafeWrite.h"
 
+#include "EditorIDMapper/EditorIDMapperAPI.h"
+
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -39,10 +41,20 @@ namespace TCS
 	
 	static constexpr UInt32 kRaceBonusRecordVersion = 1;
 
+	static constexpr UInt32 kRecordSyntheticClasses = ('T') | ('C' << 8) | ('S' << 16) | ('C' << 24);
+
+	static constexpr UInt32 kSyntheticClassRecordVersion = 1;
+
+	static constexpr UInt32 kRecordLastSyntheticClass = ('T') | ('C' << 8) | ('S' << 16) | ('L' << 24);
+
+	static constexpr UInt32 kLastSyntheticClassRecordVersion = 1;
+
 	static constexpr UInt32 kMaxSkillLevel = 100;
 	static constexpr float kProgressEpsilon = 0.0001f;
 
 	static constexpr UInt32 kMaxCustomSkills = 64;
+
+	static constexpr UInt32 kMaxCustomClasses = 64;
 
 	static constexpr UInt32 kNativeClassMajorCount = 7;
 
@@ -53,6 +65,12 @@ namespace TCS
 	static constexpr UInt32 kSentinelMajorAV = 0xFFFFFFFF;
 
 	static constexpr UInt32 kClassMenuCommit = 0x005973F0;
+
+	static constexpr UInt32 kClassMenuCommitPremade = 0x00596A00;
+
+	static constexpr UInt32 kPremadeCommitCallbackPush = 0x005970A6;
+
+	static const UInt8 kPremadeCommitCallbackPushExpected[5] = { 0x68, 0x00, 0x6A, 0x59, 0x00 };
 
 	static constexpr UInt32 kClassMenuRefreshDetails = 0x00596CF0;
 
@@ -77,6 +95,14 @@ namespace TCS
 	static constexpr UInt32 kIOManagerProcessThreads = 0x00433590;
 
 	static constexpr UInt32 kStatsMenuCreateRowsCall = 0x005DCCA3;
+
+	static constexpr UInt32 kTESClassCtor = 0x0051C580;
+
+	static constexpr UInt32 kBSSimpleListInsertSorted = 0x00416650;
+
+	static constexpr UInt32 kClassSortComparator = 0x00596C20;
+
+	static constexpr UInt32 kTESDataHandlerClassListOffset = 0x54;
 
 	static constexpr UInt32 kStatsMenuRefreshCalls[] =
 	{
@@ -136,7 +162,8 @@ namespace TCS
 	static constexpr UInt32 kXSkillsRecordProgressOffset = 0x18;
 	static constexpr UInt32 kXSkillsRecordRequiredProgressOffset = 0x1C;
 
-	static constexpr UInt32 kTESDescriptionGetTextVtableSlot = 0xA54EF0;
+	static constexpr UInt32 kTESDescriptionGetTextSkillVtableSlot = 0xA54EF0;
+	static constexpr UInt32 kTESDescriptionGetTextClassVtableSlot = 0xA52C4C;
 	using TESDescriptionGetTextFn = const char* (__thiscall*)(void* thisDescription, TESForm* parentForm, UInt32 recordCode);
 
 	static constexpr UInt32 kTESSkillGetMasteryDescription = 0x0052EAB0;
@@ -171,7 +198,7 @@ namespace TCS
 
 	static constexpr UInt32 kMQ01FormId = 0x0001E723;
 
-	static bool g_characterCreationBonusesApplied = false;
+	inline bool g_characterCreationBonusesApplied = false;
 
 	static constexpr UInt32 kClassMenuTileOffset = 0x04;
 
@@ -260,6 +287,15 @@ namespace TCS
 	};
 
 
+	struct ClassMajorOverride
+	{
+		std::string editorId;
+		std::string name;
+		std::string description;
+		std::string iconPath;
+		std::string majorSkillNames[7];
+	};
+
 	using ClassMenuRefreshDetailsFn = void(__thiscall*)(void* classMenu, void* displayedClass);
 
 	static constexpr UInt32 kClassMenuRefreshDetailsCalls[] =
@@ -329,6 +365,8 @@ namespace TCS
 	};
 
 	static constexpr const char* kSkillsDirectory = "Data\\OBSE\\Plugins\\TrueCustomSkills\\";
+
+	static constexpr const char* kClassesDirectory = "Data\\OBSE\\Plugins\\TrueCustomSkills\\Classes\\";
 
 	using SkillsMenuPreselectFn = void(__thiscall*)(void* skillsMenu);
 
@@ -403,16 +441,35 @@ namespace TCS
 
 	using StatsMenuRefreshFn = void(__thiscall*)(void* statsMenu, UInt32 actorValue);
 
-	typedef void* (__thiscall* PlaySound_t)(
-		OSSoundGlobals* thisObj,
-		const char* soundName,
-		UInt32 arg2,
-		UInt32 arg3
-		);
+	typedef void* (__thiscall* PlaySound_t)(OSSoundGlobals* thisObj, const char* soundName, UInt32 arg2, UInt32 arg3);
+
+	using TESClassCtorFn = TESClass * (__thiscall*)(TESClass* self);
+	using BSSimpleListInsertSortedFn = void(__thiscall*)(void* listHead, TESClass* newClass, UInt32 comparator);
 
 	extern SkillDefinition g_skills[kMaxCustomSkills];
 	extern UInt32 g_skillCount;
+
+	struct SyntheticClassRecord
+	{
+		std::string editorId;
+		TESClass* tesClass;
+		std::string description;
+		bool isSynthetic;
+	};
+
+	inline SyntheticClassRecord g_classOverrides[kMaxCustomClasses];
+	inline UInt32 g_classOverrideCount = 0;
+
+	struct SavedSyntheticClassEntry
+	{
+		UInt32 editorIdHash;
+		UInt32 lastKnownFormId;
+	};
+
+	inline std::vector<SavedSyntheticClassEntry> g_savedSyntheticClasses;
+
 	extern SkillState g_states[kMaxCustomSkills];
+	inline UInt32 g_lastKnownPlayerSyntheticClassFormId;
 	static constexpr UInt8 kPostLoadPushDelay = 2;
 	extern UInt8 g_postLoadPushCountdown[kMaxCustomSkills];
 	void NormalizeState(UInt32 index);
@@ -462,9 +519,11 @@ namespace TCS
 	void ApplyMajorSpecializationScaling(UInt32 index);
 	bool EnsureCustomActorValuesRegistered();
 	void LoadSkillDefinitionsFromDisk();
+	void LoadClassDefinitionsFromDisk();
 	void RegisterSerializationCallbacks();
 	void ApplyRaceBonusesAtCharacterCreation(UInt32 raceFormId);
 	void ApplyClassSpecializationBonusAtCharacterCreation();
+	void ApplyPremadeClassMajorsAtCharacterCreation();
 	UInt32 TCS_GetSkillActorValue(const char* editorId);
 	UInt8 TCS_GetSkillCode(const char* editorId);
 	bool TCS_IsTCSSkill(const char* editorId);

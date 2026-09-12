@@ -133,6 +133,187 @@ namespace TCS
 		return true;
 	}
 
+	static bool ResolveNativeSkillActorValue(const std::string& name, UInt32& outAV)
+	{
+		static const std::pair<const char*, UInt32> kNativeSkills[] =
+		{
+			{ "Blade", kActorVal_Blade },
+			{ "Blunt", kActorVal_Blunt },
+			{ "Hand to Hand", kActorVal_HandToHand },
+			{ "Armorer", kActorVal_Armorer },
+			{ "Heavy Armor", kActorVal_HeavyArmor },
+			{ "Light Armor", kActorVal_LightArmor },
+			{ "Block", kActorVal_Block },
+			{ "Athletics", kActorVal_Athletics },
+			{ "Acrobatics", kActorVal_Acrobatics },
+			{ "Marksman", kActorVal_Marksman },
+			{ "Security", kActorVal_Security },
+			{ "Sneak", kActorVal_Sneak },
+			{ "Mercantile", kActorVal_Mercantile },
+			{ "Speechcraft", kActorVal_Speechcraft },
+			{ "Alchemy", kActorVal_Alchemy },
+			{ "Alteration", kActorVal_Alteration },
+			{ "Conjuration", kActorVal_Conjuration },
+			{ "Destruction", kActorVal_Destruction },
+			{ "Illusion", kActorVal_Illusion },
+			{ "Mysticism", kActorVal_Mysticism },
+			{ "Restoration", kActorVal_Restoration },
+		};
+
+		for (const auto& entry : kNativeSkills)
+		{
+			if (!_stricmp(entry.first, name.c_str()))
+			{
+				outAV = entry.second;
+				return true;
+			}
+		}
+		return false;
+	}
+
+	static bool ResolveMajorSkillEntry(const std::string& name, UInt32& outAV)
+	{
+		for (UInt32 i = 0; i < g_skillCount; ++i)
+		{
+			if (!_stricmp(g_skills[i].editorId.c_str(), name.c_str()) || !_stricmp(g_skills[i].name.c_str(), name.c_str()))
+			{
+				if (!g_skills[i].isOwnForm || g_skills[i].realActorValue == 0)
+				{
+					_MESSAGE("TCS: class override references skill \"%s\" which has no registered actor value yet -- skipping this slot", name.c_str());
+					return false;
+				}
+				outAV = g_skills[i].realActorValue;
+				return true;
+			}
+		}
+
+		return ResolveNativeSkillActorValue(name, outAV);
+	}
+
+	static bool ParseClassJSON(const std::string& filePath, ClassMajorOverride& outDef)
+	{
+		std::ifstream file(filePath);
+		if (!file.is_open())
+		{
+			_MESSAGE("TCS: failed to open class file %s", filePath.c_str());
+			return false;
+		}
+
+		nlohmann::json j;
+		try
+		{
+			file >> j;
+		}
+		catch (const std::exception& e)
+		{
+			_MESSAGE("TCS: failed to parse class file %s: %s", filePath.c_str(), e.what());
+			return false;
+		}
+
+		if (!j.contains("editorId") || !j["editorId"].is_string() || j["editorId"].get<std::string>().empty())
+		{
+			_MESSAGE("TCS: class file %s missing required non-empty \"editorId\" string", filePath.c_str());
+			return false;
+		}
+
+		outDef.editorId = j["editorId"].get<std::string>();
+		outDef.name = j.value("name", outDef.editorId);
+		outDef.description = j.value("description", std::string(""));
+		outDef.iconPath = j.value("icon", std::string(""));
+
+		if (!j.contains("majorSkills") || !j["majorSkills"].is_array() || j["majorSkills"].size() != 7)
+		{
+			_MESSAGE("TCS: class file %s \"majorSkills\" must be an array of exactly 7 skill names", filePath.c_str());
+			return false;
+		}
+
+		for (UInt32 i = 0; i < 7; ++i)
+		{
+			if (!j["majorSkills"][i].is_string())
+			{
+				_MESSAGE("TCS: class file %s majorSkills[%u] is not a string", filePath.c_str(), i);
+				return false;
+			}
+			outDef.majorSkillNames[i] = j["majorSkills"][i].get<std::string>();
+		}
+
+		return true;
+	}
+
+	static TESClass* CreateSyntheticClass(const ClassMajorOverride& def, const UInt32 resolvedMajors[7], UInt32 forcedFormId)
+	{
+		void* mem = FormHeap_Allocate(sizeof(TESClass));
+		if (!mem)
+		{
+			_MESSAGE("TCS: FormHeap_Allocate failed for synthetic class \"%s\"", def.editorId.c_str());
+			return nullptr;
+		}
+
+		TESClass* tesClass = reinterpret_cast<TESClassCtorFn>(kTESClassCtor)(reinterpret_cast<TESClass*>(mem));
+
+		if (forcedFormId)
+			tesClass->refID = forcedFormId; // set BEFORE anything below can register/insert this object under the wrong ID
+
+		tesClass->fullName.name.Set(def.name.c_str());
+		tesClass->texture.ddsPath.Set(def.iconPath.c_str());
+
+		for (UInt32 i = 0; i < 7; ++i)
+			tesClass->majorSkills[i] = resolvedMajors[i];
+
+		tesClass->classFlags |= TESClass::kFlag_Playable;
+
+		if (g_classOverrideCount < kMaxCustomClasses)
+		{
+			g_classOverrides[g_classOverrideCount].editorId = def.editorId;
+			g_classOverrides[g_classOverrideCount].tesClass = tesClass;
+			g_classOverrides[g_classOverrideCount].description = def.description;
+			g_classOverrides[g_classOverrideCount].isSynthetic = true;
+			++g_classOverrideCount;
+		}
+
+		UInt8* dataHandlerBase = reinterpret_cast<UInt8*>(*g_dataHandler);
+		reinterpret_cast<BSSimpleListInsertSortedFn>(kBSSimpleListInsertSorted)(
+			dataHandlerBase + kTESDataHandlerClassListOffset, tesClass, kClassSortComparator);
+
+		_MESSAGE("TCS: created synthetic class \"%s\" formID=%08X", def.editorId.c_str(), tesClass->refID);
+		return tesClass;
+	}
+
+	static TESClass* CreateSyntheticClass(const ClassMajorOverride& def, const UInt32 resolvedMajors[7])
+	{
+		return CreateSyntheticClass(def, resolvedMajors, 0);
+	}
+
+	static TESClass* FindOrCreateSyntheticClass(const ClassMajorOverride& def, const UInt32 resolvedMajors[7])
+	{
+		for (UInt32 i = 0; i < g_classOverrideCount; ++i)
+		{
+			if (g_classOverrides[i].editorId == def.editorId && g_classOverrides[i].tesClass)
+			{
+				TESClass* tesClass = g_classOverrides[i].tesClass;
+				_MESSAGE("TCS: reused already-live synthetic class \"%s\" formID=%08X (created earlier this session)",
+					def.editorId.c_str(), tesClass->refID);
+
+				tesClass->fullName.name.Set(def.name.c_str());
+				for (UInt32 s = 0; s < 7; ++s)
+					tesClass->majorSkills[s] = resolvedMajors[s];
+
+				return tesClass;
+			}
+		}
+
+		const UInt32 editorIdHash = HashSkillEditorId(def.editorId);
+		for (const auto& saved : g_savedSyntheticClasses)
+		{
+			if (saved.editorIdHash != editorIdHash)
+				continue;
+
+			return CreateSyntheticClass(def, resolvedMajors, saved.lastKnownFormId);
+		}
+
+		return CreateSyntheticClass(def, resolvedMajors);
+	}
+
 	static bool ParseSkillJSON(const std::string& filePath, SkillDefinition& outDef)
 	{
 		std::ifstream file(filePath);
@@ -205,6 +386,42 @@ namespace TCS
 				outDef.raceBonuses.push_back({ sourceMod, objectId, static_cast<UInt32>(rawValue) });
 			}
 		}
+		return true;
+	}
+
+	static bool ApplyClassMajorOverride(const ClassMajorOverride& def, const std::string& filePath)
+	{
+		const UInt32 formId = EditorIDMapper::Lookup(def.editorId.c_str());
+		if (!formId)
+		{
+			_MESSAGE("TCS: class override \"%s\" could not be resolved (EditorIDMapper not ready or unknown editorId) from %s", def.editorId.c_str(), filePath.c_str());
+			return false;
+		}
+
+		TESForm* form = LookupFormByID(formId);
+		if (!form || form->typeID != kFormType_Class)
+		{
+			_MESSAGE("TCS: class override \"%s\" resolved formId=%08X is not a TESClass", def.editorId.c_str(), formId);
+			return false;
+		}
+
+		TESClass* tesClass = reinterpret_cast<TESClass*>(form);
+
+		UInt32 resolved[7] = {};
+		for (UInt32 i = 0; i < 7; ++i)
+		{
+			if (!ResolveMajorSkillEntry(def.majorSkillNames[i], resolved[i]))
+			{
+				_MESSAGE("TCS: class override \"%s\" majorSkills[%u]=\"%s\" could not be resolved -- aborting this file, no partial overwrite",
+					def.editorId.c_str(), i, def.majorSkillNames[i].c_str());
+				return false;
+			}
+		}
+
+		for (UInt32 i = 0; i < 7; ++i)
+			tesClass->majorSkills[i] = resolved[i];
+
+		_MESSAGE("TCS: class \"%s\" majorSkills overwritten from %s", def.editorId.c_str(), filePath.c_str());
 		return true;
 	}
 
@@ -514,6 +731,52 @@ namespace TCS
 		}
 	}
 
+	void ApplyPremadeClassMajorsAtCharacterCreation()
+	{
+		PlayerCharacter* player = GetPlayer();
+		if (!player || !player->baseForm)
+			return;
+
+		TESNPC* npc = reinterpret_cast<TESNPC*>(player->baseForm);
+		TESClass* npcClass = npc->npcClass;
+		if (!npcClass)
+			return;
+
+		for (UInt32 slot = 0; slot < 7; ++slot)
+		{
+			const UInt32 majorAV = npcClass->majorSkills[slot];
+
+			for (UInt32 i = 0; i < g_skillCount; ++i)
+			{
+				if (!g_skills[i].isOwnForm || g_skills[i].realActorValue != majorAV)
+					continue;
+
+				if (g_states[i].major)
+					break;
+
+				g_states[i].major = 1;
+				NormalizeState(i);
+				const UInt32 realLevel = GetRealAVLevel(i);
+				UInt32 base = g_states[i].level;
+				if (realLevel > base)
+					base = realLevel;
+				UInt32 target = base + 20;
+				if (target > kMaxSkillLevel)
+					target = kMaxSkillLevel;
+
+				_MESSAGE("TCS: premade class major applied skillId=%u slot=%u level %u -> %u",
+					g_skills[i].skillId, slot, g_states[i].level, target);
+
+				g_states[i].level = target;
+
+				if (g_skills[i].realActorValue != 0)
+					PushSkillLevelToRealAV(i);
+
+				break;
+			}
+		}
+	}
+
 	bool EnsureCustomActorValuesRegistered()
 	{
 		bool linkedAny = false;
@@ -635,6 +898,91 @@ namespace TCS
 		FindClose(findHandle);
 
 		_MESSAGE("TCS: skill registry loaded %u/%u files (%u skipped)", g_skillCount, attempted, skipped);
+	}
+
+	void LoadClassDefinitionsFromDisk()
+	{
+		EnsureCustomActorValuesRegistered();
+
+		std::string searchPattern = kClassesDirectory;
+		searchPattern += "*.json";
+
+		WIN32_FIND_DATAA findData = {};
+		HANDLE findHandle = FindFirstFileA(searchPattern.c_str(), &findData);
+		if (findHandle == INVALID_HANDLE_VALUE)
+		{
+			_MESSAGE("TCS: no class override files found in %s", kClassesDirectory);
+			return;
+		}
+
+		UInt32 attempted = 0;
+		UInt32 applied = 0;
+		do
+		{
+			if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+				continue;
+
+			++attempted;
+			std::string filePath = kClassesDirectory;
+			filePath += findData.cFileName;
+
+			ClassMajorOverride parsed = {};
+			if (!ParseClassJSON(filePath, parsed))
+				continue;
+
+			const UInt32 formId = EditorIDMapper::Lookup(parsed.editorId.c_str());
+			if (formId)
+			{
+				if (ApplyClassMajorOverride(parsed, filePath))
+					++applied;
+			}
+			else
+			{
+				UInt32 resolved[7] = {};
+				bool allResolved = true;
+				for (UInt32 i = 0; i < 7; ++i)
+				{
+					if (!ResolveMajorSkillEntry(parsed.majorSkillNames[i], resolved[i]))
+					{
+						_MESSAGE("TCS: new class \"%s\" majorSkills[%u]=\"%s\" could not be resolved -- aborting this file",
+							parsed.editorId.c_str(), i, parsed.majorSkillNames[i].c_str());
+						allResolved = false;
+						break;
+					}
+				}
+
+				if (allResolved)
+				{
+					TESClass* created = FindOrCreateSyntheticClass(parsed, resolved);
+					if (created)
+						++applied;
+				}
+			}
+		} while (FindNextFileA(findHandle, &findData));
+		FindClose(findHandle);
+
+		if (g_lastKnownPlayerSyntheticClassFormId)
+		{
+			for (UInt32 i = 0; i < g_classOverrideCount; ++i)
+			{
+				if (g_classOverrides[i].tesClass && g_classOverrides[i].tesClass->refID == g_lastKnownPlayerSyntheticClassFormId)
+				{
+					if (PlayerCharacter* player = GetPlayer())
+					{
+						if (player->baseForm)
+						{
+							TESNPC* npc = reinterpret_cast<TESNPC*>(player->baseForm);
+							_MESSAGE("TCS: repointing npc->npcClass from refID=%08X to recreated synthetic class refID=%08X",
+								npc->npcClass ? npc->npcClass->refID : 0, g_classOverrides[i].tesClass->refID);
+							npc->npcClass = g_classOverrides[i].tesClass;
+						}
+					}
+					break;
+				}
+			}
+		}
+
+		_MESSAGE("TCS: class override registry processed %u/%u files (%u applied)", applied, attempted);
 	}
 
 	UInt32 GetSkillIndexById(UInt32 skillId)
@@ -935,11 +1283,60 @@ namespace TCS
 		{
 			_MESSAGE("TCS: SaveCallback failed to open raceBonusApplied record");
 		}
+
+		if (g_serialization->OpenRecord(kRecordSyntheticClasses, kSyntheticClassRecordVersion))
+		{
+			const UInt32 count = g_classOverrideCount;
+			g_serialization->WriteRecordData(&count, sizeof(count));
+			for (UInt32 i = 0; i < g_classOverrideCount; ++i)
+			{
+				SavedSyntheticClassEntry entry{ HashSkillEditorId(g_classOverrides[i].editorId), g_classOverrides[i].tesClass->refID };
+				g_serialization->WriteRecordData(&entry, sizeof(entry));
+			}
+			_MESSAGE("TCS: SaveCallback wrote %u synthetic class entr%s", g_classOverrideCount, g_classOverrideCount == 1 ? "y" : "ies");
+		}
+		else
+		{
+			_MESSAGE("TCS: SaveCallback failed to open synthetic class record");
+		}
+
+		g_lastKnownPlayerSyntheticClassFormId = 0;
+		if (PlayerCharacter* player = GetPlayer())
+		{
+			if (player->baseForm)
+			{
+				TESNPC* npc = reinterpret_cast<TESNPC*>(player->baseForm);
+				if (npc->npcClass)
+				{
+					for (UInt32 i = 0; i < g_classOverrideCount; ++i)
+					{
+						if (g_classOverrides[i].tesClass == npc->npcClass)
+						{
+							g_lastKnownPlayerSyntheticClassFormId = npc->npcClass->refID;
+							break;
+						}
+					}
+				}
+			}
+		}
+
+		if (g_serialization->OpenRecord(kRecordLastSyntheticClass, kLastSyntheticClassRecordVersion))
+		{
+			g_serialization->WriteRecordData(&g_lastKnownPlayerSyntheticClassFormId, sizeof(g_lastKnownPlayerSyntheticClassFormId));
+			_MESSAGE("TCS: SaveCallback wrote lastKnownPlayerSyntheticClassFormId=%08X", g_lastKnownPlayerSyntheticClassFormId);
+		}
+		else
+		{
+			_MESSAGE("TCS: SaveCallback failed to open lastKnownPlayerSyntheticClassFormId record");
+		}
 	}
 
 	static void LoadCallback(void*)
 	{
 		std::memset(g_states, 0, sizeof(g_states));
+		g_savedSyntheticClasses.clear();
+		g_lastKnownPlayerSyntheticClassFormId = 0;
+
 		if (!g_serialization)
 		{
 			_MESSAGE("TCS: LoadCallback aborted — g_serialization is null");
@@ -960,6 +1357,59 @@ namespace TCS
 				{
 					g_characterCreationBonusesApplied = savedFlag;
 					_MESSAGE("TCS: LoadCallback read raceBonusApplied=%d", g_characterCreationBonusesApplied ? 1 : 0);
+				}
+				continue;
+			}
+
+			if (type == kRecordSyntheticClasses)
+			{
+				if (version != kSyntheticClassRecordVersion)
+				{
+					_MESSAGE("TCS: LoadCallback ignored incompatible synthetic class record version=%u (expected %u)",
+						version, kSyntheticClassRecordVersion);
+					continue;
+				}
+
+				UInt32 savedCount = 0;
+				if (g_serialization->ReadRecordData(&savedCount, sizeof(savedCount)) != sizeof(savedCount))
+				{
+					_MESSAGE("TCS: LoadCallback failed to read synthetic class count");
+					continue;
+				}
+
+				const UInt32 maxByLength = (length - sizeof(savedCount)) / sizeof(SavedSyntheticClassEntry);
+				const UInt32 entriesToRead = savedCount < maxByLength ? savedCount : maxByLength;
+				for (UInt32 i = 0; i < entriesToRead; ++i)
+				{
+					SavedSyntheticClassEntry entry = {};
+					if (g_serialization->ReadRecordData(&entry, sizeof(entry)) != sizeof(entry))
+						break;
+
+					g_savedSyntheticClasses.push_back(entry);
+					_MESSAGE("TCS: LoadCallback read synthetic class editorIdHash=%08X lastKnownFormId=%08X",
+						entry.editorIdHash, entry.lastKnownFormId);
+				}
+
+				if (savedCount > entriesToRead)
+					_MESSAGE("TCS: synthetic class record count=%u length only contained %u entries", savedCount, entriesToRead);
+
+				continue;
+			}
+
+			if (type == kRecordLastSyntheticClass)
+			{
+				if (version != kLastSyntheticClassRecordVersion)
+				{
+					_MESSAGE("TCS: LoadCallback ignored incompatible last-synthetic-class record version=%u (expected %u)",
+						version, kLastSyntheticClassRecordVersion);
+					continue;
+				}
+
+				UInt32 savedFormId = 0;
+				if (g_serialization->ReadRecordData(&savedFormId, sizeof(savedFormId)) == sizeof(savedFormId))
+				{
+					g_lastKnownPlayerSyntheticClassFormId = savedFormId;
+					_MESSAGE("TCS: LoadCallback read lastKnownPlayerSyntheticClassFormId=%08X", g_lastKnownPlayerSyntheticClassFormId);
 				}
 				continue;
 			}
@@ -1008,6 +1458,7 @@ namespace TCS
 	{
 		std::memset(g_states, 0, sizeof(g_states));
 		std::memset(g_postLoadPushCountdown, 0, sizeof(g_postLoadPushCountdown));
+		TCS::LoadClassDefinitionsFromDisk();
 	}
 
 	void RegisterSerializationCallbacks()

@@ -15,6 +15,8 @@ namespace TCS
 
 	static UInt32 g_classMenuCommitOriginalTarget = kClassMenuCommit;
 
+	static UInt32 g_classMenuCommitPremadeOriginalTarget = kClassMenuCommitPremade;
+
 	static ClassMenuCommitFn ClassMenuCommitOriginal()
 	{
 		return reinterpret_cast<ClassMenuCommitFn>(g_classMenuCommitOriginalTarget);
@@ -775,6 +777,16 @@ namespace TCS
 			_snprintf_s(user2Literal, sizeof(user2Literal), _TRUNCATE, " <user2> %d </user2> ", static_cast<int>(scrollMax));
 			g_menuQueInsertXML(scrollBar, user2Literal, 0);
 			g_menuQueLastAppliedScrollMax = scrollMax;
+
+			const float currentScroll = GetTileFloat(scrollBar, kTileValue_user7);
+			_MESSAGE("TCS: scrollbar state user7=%.2f scrollMax=%.2f (finalMajorCount=%u nativeMinorRows=%u)",
+				currentScroll, scrollMax, finalMajorCount, nativeMinorRows);
+			if (std::isfinite(currentScroll) && currentScroll > scrollMax)
+			{
+				SetTileFloat(scrollBar, kTileValue_user7, scrollMax);
+				_MESSAGE("TCS: clamped scrollbar user7 %.1f -> %.1f (new max)", currentScroll, scrollMax);
+			}
+
 			_MESSAGE("TCS: applied MenuQue InsertXML user2=%d (was %d)", static_cast<int>(scrollMax), static_cast<int>(previous));
 		}
 	}
@@ -1200,7 +1212,11 @@ namespace TCS
 
 	static void* g_statsMenuDetailsOriginal = nullptr;
 
-	static void* g_originalTESDescriptionGetText = nullptr;
+	static void* g_originalTESDescriptionGetTextSkill = nullptr;
+
+	static void* g_originalTESDescriptionGetTextClass = nullptr;
+
+	static void* g_originalClassMenuCommitPremade = nullptr;
 
 	static void* g_originalTESSkillGetMasteryDescription = nullptr;
 
@@ -1234,6 +1250,16 @@ namespace TCS
 
 	static const char* __fastcall HookTESDescriptionGetText(void* thisDescription, void* /*unused, absorbs EDX*/, TESForm* parentForm, UInt32 recordCode)
 	{
+		for (UInt32 i = 0; i < g_classOverrideCount; ++i)
+		{
+			if (!g_classOverrides[i].isSynthetic || !g_classOverrides[i].tesClass)
+				continue;
+
+			UInt8* form = reinterpret_cast<UInt8*>(g_classOverrides[i].tesClass);
+			if (thisDescription == form + 0x24)
+				return g_classOverrides[i].description.c_str();
+		}
+
 		for (UInt32 i = 0; i < g_skillCount; ++i)
 		{
 			if (!g_skills[i].isOwnForm || !g_skills[i].xSkillsForm)
@@ -1267,7 +1293,55 @@ namespace TCS
 				const SInt32 deltaFromForm = static_cast<SInt32>(reinterpret_cast<UInt8*>(thisDescription) - form);
 			}
 		}
-		return reinterpret_cast<TESDescriptionGetTextFn>(g_originalTESDescriptionGetText)(thisDescription, parentForm, recordCode);
+		return reinterpret_cast<TESDescriptionGetTextFn>(g_originalTESDescriptionGetTextSkill)(thisDescription, parentForm, recordCode);
+	}
+
+	static __declspec(naked) void HookPremadeClassCommit()
+	{
+		__asm
+		{
+			call dword ptr[kClassMenuCommitPremade]
+			sub esp, 108
+			fnsave[esp]
+			pushad
+			call ApplyPremadeClassMajorsAtCharacterCreation
+			popad
+			frstor[esp]
+			add esp, 108
+			ret
+		}
+	}
+
+	static bool BytesEqual(UInt32 address, const UInt8* expected, UInt32 length)
+	{
+		return std::memcmp(reinterpret_cast<const void*>(address), expected, length) == 0;
+	}
+
+	static bool InstallPremadeClassCommitHook()
+	{
+		if (!BytesEqual(kPremadeCommitCallbackPush, kPremadeCommitCallbackPushExpected, sizeof(kPremadeCommitCallbackPushExpected)))
+		{
+			_ERROR("TCS: signature mismatch for premade class commit callback push at %08X", kPremadeCommitCallbackPush);
+			++g_failedPatches;
+			return false;
+		}
+
+		DWORD oldProtect = 0;
+		void* ptr = reinterpret_cast<void*>(kPremadeCommitCallbackPush);
+		if (!VirtualProtect(ptr, 5, PAGE_EXECUTE_READWRITE, &oldProtect))
+		{
+			++g_failedPatches;
+			return false;
+		}
+
+		*reinterpret_cast<UInt32*>(kPremadeCommitCallbackPush + 1) = reinterpret_cast<UInt32>(&HookPremadeClassCommit);
+
+		DWORD ignored = 0;
+		VirtualProtect(ptr, 5, oldProtect, &ignored);
+		FlushInstructionCache(GetCurrentProcess(), ptr, 5);
+		++g_appliedPatches;
+		_MESSAGE("TCS: installed premade class commit hook at %08X", kPremadeCommitCallbackPush);
+		return true;
 	}
 
 	static void __stdcall HandleStatsMenuDetails(void* statsMenu, UInt32 buttonId, Tile* selectedTile)
@@ -1416,9 +1490,15 @@ namespace TCS
 			kStatsMenuDetailsPatchLength,
 			g_statsMenuDetailsOriginal);
 
-		g_originalTESDescriptionGetText = reinterpret_cast<void*>(
-			DetourVtable(kTESDescriptionGetTextVtableSlot, reinterpret_cast<UInt32>(&HookTESDescriptionGetText)));
-		_MESSAGE("TCS: detoured TESDescription::GetText vtable slot, original=%p", g_originalTESDescriptionGetText);
+		g_originalTESDescriptionGetTextSkill = reinterpret_cast<void*>(
+			DetourVtable(kTESDescriptionGetTextSkillVtableSlot, reinterpret_cast<UInt32>(&HookTESDescriptionGetText)));
+		_MESSAGE("TCS: detoured TESDescription::GetText vtable slot, original=%p", g_originalTESDescriptionGetTextSkill);
+
+		g_originalTESDescriptionGetTextClass = reinterpret_cast<void*>(
+			DetourVtable(kTESDescriptionGetTextClassVtableSlot, reinterpret_cast<UInt32>(&HookTESDescriptionGetText)));
+		_MESSAGE("TCS: detoured TESDescription::GetText vtable slot, original=%p", g_originalTESDescriptionGetTextClass);
+
+		ok &= InstallPremadeClassCommitHook();
 
 		ok &= InstallFunctionJumpHook("TESSkill_GetMasteryDescription hook",
 			kTESSkillGetMasteryDescription,
