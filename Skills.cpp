@@ -454,8 +454,13 @@ namespace TCS
 		if (!raceFormId)
 			return;
 
+		EnsureCustomActorValuesRegistered();
+
 		for (UInt32 i = 0; i < g_skillCount; ++i)
 		{
+			if (!g_skills[i].isOwnForm)
+				continue;
+
 			const UInt32 bonus = GetRaceBonusForSkill(i, raceFormId);
 			if (!bonus)
 				continue;
@@ -485,6 +490,8 @@ namespace TCS
 		TESClass* npcClass = npc->npcClass;
 		if (!npcClass)
 			return;
+
+		EnsureCustomActorValuesRegistered();
 
 		const UInt32 classSpecialization = npcClass->specialization;
 
