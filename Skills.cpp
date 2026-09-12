@@ -177,7 +177,7 @@ namespace TCS
 		{
 			if (!_stricmp(g_skills[i].editorId.c_str(), name.c_str()) || !_stricmp(g_skills[i].name.c_str(), name.c_str()))
 			{
-				if (!g_skills[i].isOwnForm || g_skills[i].realActorValue == 0)
+				if (g_skills[i].realActorValue == 0)
 				{
 					_MESSAGE("TCS: class override references skill \"%s\" which has no registered actor value yet -- skipping this slot", name.c_str());
 					return false;
@@ -748,7 +748,7 @@ namespace TCS
 
 			for (UInt32 i = 0; i < g_skillCount; ++i)
 			{
-				if (!g_skills[i].isOwnForm || g_skills[i].realActorValue != majorAV)
+				if (g_skills[i].realActorValue != majorAV)
 					continue;
 
 				if (g_states[i].major)
