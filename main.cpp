@@ -30,6 +30,138 @@ namespace TCS
 		&TCS_GetSkillMastery,
 	};
 
+	static bool DescriptionFunc_Execute(COMMAND_ARGS, UInt32 mode)
+	{
+		UInt32 minArgs = (mode == kDescription_Set) ? 1 : 0;
+
+		TESDescription* desc = NULL;
+		ExpressionEvaluator eval(PASS_COMMAND_ARGS);
+		if (eval.ExtractArgs())
+		{
+			// TCS dynamic skills: not addressable as a TESForm, so check for a string
+			// editorId matching one of our registered skills before falling through
+			// to the native TESForm/TESSkill handling below.
+			const UInt32 argsAfterMin = eval.NumArgs() - minArgs;
+			if (argsAfterMin >= 1 && eval.Arg(minArgs)->CanConvertTo(kTokenType_String))
+			{
+				const char* maybeSkillEditorId = eval.Arg(minArgs)->GetString();
+				if (TCS::TCS_IsTCSSkill(maybeSkillEditorId))
+				{
+					if (mode == kDescription_Get)
+					{
+						const char* descText;
+						if (argsAfterMin >= 2)
+						{
+							UInt32 idx = eval.Arg(minArgs + 1)->GetNumber();
+							descText = TCS::TCS_GetSkillLevelQuoteText(maybeSkillEditorId, idx);
+						}
+						else
+						{
+							descText = TCS::TCS_GetSkillDescriptionText(maybeSkillEditorId);
+						}
+						AssignToStringVar(PASS_COMMAND_ARGS, descText ? descText : "");
+					}
+					else if (mode == kDescription_Set && eval.Arg(0)->CanConvertTo(kTokenType_String))
+					{
+						const char* nuText = eval.Arg(0)->GetString();
+						*result = (argsAfterMin >= 2)
+							? (TCS::TCS_SetSkillLevelQuoteText(maybeSkillEditorId, eval.Arg(minArgs + 1)->GetNumber(), nuText) ? 1.0 : 0.0)
+							: (TCS::TCS_SetSkillDescriptionText(maybeSkillEditorId, nuText) ? 1.0 : 0.0);
+					}
+					return true;
+				}
+			}
+
+			switch (argsAfterMin) {
+			case 0:
+				if (thisObj)
+					desc = OBLIVION_CAST(thisObj->baseForm, TESForm, TESDescription);
+				break;
+			case 1:
+				desc = OBLIVION_CAST(eval.Arg(minArgs)->GetTESForm(), TESForm, TESDescription);
+				break;
+			case 2:
+			{
+				TESSkill* skill = OBLIVION_CAST(eval.Arg(minArgs)->GetTESForm(), TESForm, TESSkill);
+				if (skill) {
+					UInt32 idx = eval.Arg(minArgs + 1)->GetNumber();
+					if (idx < 4) {
+						if (mode == kDescription_Get && !IsDescriptionModified(&skill->levelQuote[idx])) {
+							AssignToStringVar(PASS_COMMAND_ARGS, skill->GetLevelQuoteText(idx));
+							return true;
+						}
+						else {
+							desc = &skill->levelQuote[idx];
+						}
+					}
+				}
+			}
+			break;
+			}
+
+			if (mode == kDescription_Get) {
+				const char* descText = desc ? desc->GetDescription() : "";
+				AssignToStringVar(PASS_COMMAND_ARGS, descText);
+			}
+			else if (mode == kDescription_Set && desc && eval.Arg(0)->CanConvertTo(kTokenType_String)) {
+				const char* nuText = eval.Arg(0)->GetString();
+				*result = SetDescriptionText(desc, nuText) ? 1.0 : 0.0;
+			}
+		}
+
+		return true;
+	}
+
+	void OverwriteOBSECommands()
+	{
+		UInt32 OBSECommandTablePatch = 0x004FCA68;
+		CommandInfo* cmd = *(CommandInfo**)(OBSECommandTablePatch + 3);
+
+		if (!cmd)
+		{
+			_ERROR("Overwrite OBSE Commands: command table not found at %08X",
+				OBSECommandTablePatch);
+			return;
+		}
+
+		_MESSAGE("Overwrite OBSE Commands: Command Table at %08X", cmd);
+
+		struct Replacement
+		{
+			const char* name;
+			bool (*execute)(COMMAND_ARGS);
+		};
+
+		static const Replacement kReplacements[] =
+		{
+			{ "GetDescription",        Cmd_TCSGetDescription_Execute },
+		};
+
+		UInt32 replaced = 0;
+
+		while (cmd->opcode)
+		{
+			for (const Replacement& r : kReplacements)
+			{
+				if (_stricmp(cmd->longName, r.name) == 0)
+				{
+					_MESSAGE("Overwriting command '%s' w/ opcode %08X",
+						cmd->longName, cmd->opcode);
+
+					cmd->execute = r.execute;
+					replaced++;
+					break;
+				}
+			}
+
+			cmd++;
+		}
+
+		_MESSAGE("Overwrite OBSE Commands: replaced %u of %u",
+			replaced, (UInt32)(sizeof(kReplacements) / sizeof(kReplacements[0])));
+	}
+}
+
 	static void UnifiedMessageHandler(OBSEMessagingInterface::Message* message)
 	{
 		if (!message || !message->data)
