@@ -490,8 +490,6 @@ namespace TCS
 		FindClose(findHandle);
 
 		_MESSAGE("TCS: skill registry loaded %u/%u files (%u skipped)", g_skillCount, attempted, skipped);
-		if (g_skillCount == 0)
-			EnsureDummySkillRegistered();
 	}
 
 	UInt32 GetSkillIndexById(UInt32 skillId)

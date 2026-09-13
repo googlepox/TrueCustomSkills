@@ -17,6 +17,7 @@ namespace TCS
 
 		if (message->type == OBSEMessagingInterface::kMessage_PostPostLoad)
 		{
+			TCS::LoadSkillDefinitionsFromDisk();
 			if (!InstallHooks())
 				_ERROR("TCS: failed to install native hooks");
 		}
@@ -74,8 +75,6 @@ extern "C"
 		info->name = "True Custom Skills";
 		info->version = TCS::kPluginVersion;
 
-		if (obse->isEditor)
-			return false;
 		if (obse->obseVersion < OBSE_VERSION_INTEGER)
 			return false;
 		if (obse->oblivionVersion != OBLIVION_VERSION)
@@ -94,9 +93,11 @@ extern "C"
 
 		obse->SetOpcodeBase(0x2910);
 
-		TCS::RegisterSerializationCallbacks();
-		TCS::LoadSkillDefinitionsFromDisk();
-		TCS::RegisterMessaging(obse);
+		if (!obse->isEditor)
+		{
+			TCS::RegisterSerializationCallbacks();
+			TCS::RegisterMessaging(obse);
+		}
 
 		if (!obse->RegisterCommand(&TCS::kCommandInfo_GetTCSSkillCode))
 			_ERROR("TCS: failed to register GetTCSSkillCode command");
