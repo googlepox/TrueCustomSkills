@@ -537,4 +537,8 @@ namespace TCS
 	UInt32 TCS_GetSkillLevelUps(const char* editorId);
 	UInt32 TCS_GetSkillGoverningAttributeIncreases(const char* editorId);
 	UInt32 TCS_GetSkillMastery(const char* editorId);
+	bool TCS_SetSkillLevelQuoteText(const char* editorId, UInt32 idx, const char* text);
+	bool TCS_SetSkillDescriptionText(const char* editorId, const char* text);
+	const char* TCS_GetSkillLevelQuoteText(const char* editorId, UInt32 idx);
+	const char* TCS_GetSkillDescriptionText(const char* editorId);
 }

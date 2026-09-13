@@ -1665,4 +1665,53 @@ namespace TCS
 		return GetSkillMasteryLevel(g_states[index].level);
 	}
 
+	const char* TCS_GetSkillDescriptionText(const char* editorId)
+	{
+		for (UInt32 i = 0; i < g_skillCount; ++i)
+			if (!_stricmp(g_skills[i].editorId.c_str(), editorId))
+				return g_skills[i].description.c_str();
+		return "";
+	}
+
+	const char* TCS_GetSkillLevelQuoteText(const char* editorId, UInt32 idx)
+	{
+		if (idx >= 4)
+			return "";
+		for (UInt32 i = 0; i < g_skillCount; ++i)
+		{
+			if (_stricmp(g_skills[i].editorId.c_str(), editorId))
+				continue;
+			const std::string* tiers[4] = { &g_skills[i].apprenticeText, &g_skills[i].journeymanText, &g_skills[i].expertText, &g_skills[i].masterText };
+			return tiers[idx]->c_str();
+		}
+		return "";
+	}
+
+	bool TCS_SetSkillDescriptionText(const char* editorId, const char* text)
+	{
+		for (UInt32 i = 0; i < g_skillCount; ++i)
+		{
+			if (_stricmp(g_skills[i].editorId.c_str(), editorId))
+				continue;
+			g_skills[i].description = text;
+			return true;
+		}
+		return false;
+	}
+
+	bool TCS_SetSkillLevelQuoteText(const char* editorId, UInt32 idx, const char* text)
+	{
+		if (idx >= 4)
+			return false;
+		for (UInt32 i = 0; i < g_skillCount; ++i)
+		{
+			if (_stricmp(g_skills[i].editorId.c_str(), editorId))
+				continue;
+			std::string* tiers[4] = { &g_skills[i].apprenticeText, &g_skills[i].journeymanText, &g_skills[i].expertText, &g_skills[i].masterText };
+			*tiers[idx] = text;
+			return true;
+		}
+		return false;
+	}
+
 }
