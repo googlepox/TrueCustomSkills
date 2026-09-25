@@ -25,6 +25,13 @@ jobs:
           ref: develop
           path: nlohmann/json
 
+      - name: Checkout EditorIDMapper
+        uses: actions/checkout@v4
+        with:
+          repository: googlepox/EditorIDMapper
+          ref: master
+          path: EditorIDMapper
+
       - name: Checkout plugin source
         uses: actions/checkout@v4
         with:
