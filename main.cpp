@@ -36,8 +36,6 @@ namespace TCS
 		const bool isCustom = TCS::FindSkillIndexBySkillCode(skill, customIndex);
 		if (!isCustom && !IsSkill(skill)) return false;
 
-		_MESSAGE("IsMajorShared skill=%08X isCustom=%d idx=%u class=%p obj=%p player=%p",
-			skill, isCustom, customIndex, theClass, thisObj, *g_thePlayer);
 
 		if (!theClass)
 		{

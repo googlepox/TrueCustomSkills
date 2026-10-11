@@ -791,7 +791,6 @@ namespace TCS
 				{
 					if (g_skills[i].skillCode != code)
 					{
-						_MESSAGE("Setting skillCode for %s to %08X", g_skills[i].editorId.c_str(), code);
 						g_skills[i].skillCode = code;
 					}
 				}
@@ -809,7 +808,6 @@ namespace TCS
 			{
 				if (g_skills[i].skillCode != code)
 				{
-					_MESSAGE("Setting skillCode for %s to %08X", g_skills[i].editorId.c_str(), code);
 					g_skills[i].skillCode = code;
 				}
 			}
