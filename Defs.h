@@ -254,6 +254,7 @@ namespace TCS
 		UInt32 specialization;
 		XPCurveMode xpCurve;
 		UInt32 realActorValue = 0;
+		UInt8 skillCode = 0;
 		bool isOwnForm = false;
 		void* xSkillsForm = nullptr;
 		std::string apprenticeText;
@@ -509,6 +510,8 @@ namespace TCS
 	void* GetXSkillsFormForAV(UInt32 avCode);
 	bool InstallHooks();
 	UInt32 GetSkillIndexById(UInt32 skillId);
+	bool FindSkillIndexByRealAV(UInt32 av, UInt32& outIndex);
+	bool FindSkillIndexBySkillCode(UInt32 av, UInt32& outIndex);
 	const char* GetSkillIconLarge(UInt32 index);
 	const char* GetSkillIconSmall(UInt32 index);
 	void ComposeSkillDescriptionText(UInt32 index, char* buffer, UInt32 bufferSize);

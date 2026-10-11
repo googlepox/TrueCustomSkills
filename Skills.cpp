@@ -785,13 +785,34 @@ namespace TCS
 		for (UInt32 i = 0; i < g_skillCount; ++i)
 		{
 			if (g_skills[i].realActorValue != 0)
+			{
+				UInt8 code;
+				if (ReadXSkillsSkillCode(g_skills[i].realActorValue, code))
+				{
+					if (g_skills[i].skillCode != code)
+					{
+						_MESSAGE("Setting skillCode for %s to %08X", g_skills[i].editorId.c_str(), code);
+						g_skills[i].skillCode = code;
+					}
+				}
 				continue;
+			}
 
 			bool wasReused = false;
 			g_skills[i].realActorValue = RegisterCustomActorValue(g_skills[i].name, wasReused);
 
 			if (g_skills[i].realActorValue == 0)
 				continue;
+
+			UInt8 code;
+			if (ReadXSkillsSkillCode(g_skills[i].realActorValue, code))
+			{
+				if (g_skills[i].skillCode != code)
+				{
+					_MESSAGE("Setting skillCode for %s to %08X", g_skills[i].editorId.c_str(), code);
+					g_skills[i].skillCode = code;
+				}
+			}
 
 			linkedAny = true;
 
@@ -995,6 +1016,33 @@ namespace TCS
 				return i;
 		}
 		return 0xFFFFFFFF;
+	}
+
+	bool FindSkillIndexByRealAV(UInt32 av, UInt32& outIndex)
+	{
+		if (!av)
+			return false;
+
+		for (UInt32 i = 0; i < g_skillCount; ++i)
+		{
+			if (g_skills[i].realActorValue == av)
+			{
+				outIndex = i;
+				return true;
+			}
+		}
+		return false;
+	}
+
+	bool FindSkillIndexBySkillCode(UInt32 code, UInt32& outIndex)
+	{
+		if (code > 0xFF) return false;
+		for (UInt32 i = 0; i < g_skillCount; ++i)
+			if (g_skills[i].skillCode == code)
+			{
+				outIndex = i; return true;
+			}
+		return false;
 	}
 
 	static UInt32 GetSkillIndexByEditorId(const char* editorId)

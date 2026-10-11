@@ -30,6 +30,118 @@ namespace TCS
 		&TCS_GetSkillMastery,
 	};
 
+	static bool IsMajorShared(UInt32 skill, TESClass* theClass, TESObjectREFR* thisObj)
+	{
+		UInt32 customIndex = 0;
+		const bool isCustom = TCS::FindSkillIndexBySkillCode(skill, customIndex);
+		if (!isCustom && !IsSkill(skill)) return false;
+
+		_MESSAGE("IsMajorShared skill=%08X isCustom=%d idx=%u class=%p obj=%p player=%p",
+			skill, isCustom, customIndex, theClass, thisObj, *g_thePlayer);
+
+		if (!theClass)
+		{
+			if (!thisObj) return false;
+			if (isCustom && thisObj == *g_thePlayer)
+			{
+				return TCS::g_states[customIndex].major != 0;
+			}
+
+			TESNPC* npc = OBLIVION_CAST(thisObj->baseForm, TESForm, TESNPC);
+			if (!npc || !npc->npcClass) return false;
+			theClass = npc->npcClass;
+		}
+
+		if (isCustom)
+		{
+			TESObjectREFR* player = *g_thePlayer;
+			if (thisObj == player)
+			{
+				return TCS::g_states[customIndex].major != 0;
+			}
+			if (!thisObj && !theClass) return false;
+
+			for (UInt32 i = 0; i < 7; ++i)
+				if (theClass->majorSkills[i] == skill) return true;
+			
+			return false;
+		}
+
+		return theClass->IsMajorSkill(skill);
+	}
+
+	static bool Cmd_TCSIsMajor_Execute(COMMAND_ARGS)
+	{
+		*result = 0;
+
+		UInt32 skill = 0;
+		TESClass* theClass = NULL;
+		ExtractArgs(PASS_EXTRACT_ARGS, &skill, &theClass);
+
+		*result = IsMajorShared(skill, theClass, thisObj) ? 1 : 0;
+		return true;
+	}
+
+	static bool Cmd_TCSIsMajor_Eval(COMMAND_ARGS_EVAL)
+	{
+		*result = 0;
+		if (!arg1) return true;
+		*result = IsMajorShared(*((UInt32*)arg1), (TESClass*)arg2, thisObj) ? 1 : 0;
+		return true;
+	}
+
+	void OverwriteOBSECommands()
+	{
+		UInt32 OBSECommandTablePatch = 0x004FCA68;
+		CommandInfo* cmd = *(CommandInfo**)(OBSECommandTablePatch + 3);
+
+		if (!cmd)
+		{
+			_ERROR("Overwrite OBSE Commands: command table not found at %08X",
+				OBSECommandTablePatch);
+			return;
+		}
+
+		_MESSAGE("Overwrite OBSE Commands: Command Table at %08X", cmd);
+
+		struct Replacement
+		{
+			const char* name;
+			bool (*execute)(COMMAND_ARGS);
+			bool (*eval)(COMMAND_ARGS_EVAL);
+		};
+
+		static const Replacement kReplacements[] =
+		{
+			{ "IsClassSkillC", Cmd_TCSIsMajor_Execute, Cmd_TCSIsMajor_Eval },
+			{ "IsMajorC", Cmd_TCSIsMajor_Execute, Cmd_TCSIsMajor_Eval },
+		};
+
+		UInt32 replaced = 0;
+
+		while (cmd->opcode)
+		{
+			for (const Replacement& r : kReplacements)
+			{
+				if (_stricmp(cmd->longName, r.name) == 0)
+				{
+					_MESSAGE("Overwriting command '%s' w/ opcode %08X",
+						cmd->longName, cmd->opcode);
+
+					cmd->execute = r.execute;
+					cmd->eval = r.eval;
+					replaced++;
+					break;
+				}
+			}
+
+			cmd++;
+		}
+
+		_MESSAGE("Overwrite OBSE Commands: replaced %u of %u",
+			replaced, (UInt32)(sizeof(kReplacements) / sizeof(kReplacements[0])));
+	}
+
 	static void UnifiedMessageHandler(OBSEMessagingInterface::Message* message)
 	{
 		if (!message || !message->data)
@@ -54,7 +166,10 @@ namespace TCS
 			g_messaging->RegisterListener(g_pluginHandle, "EditorIDMapper", UnifiedMessageHandler);
 		}
 		else if (message->type == OBSEMessagingInterface::kMessage_PostLoadGame)
+		{
+			OverwriteOBSECommands();
 			TCS::LoadClassDefinitionsFromDisk();
+		}
 	}
 
 	static void InterfaceRequestHandler(OBSEMessagingInterface::Message* message)
@@ -95,7 +210,8 @@ namespace TCS
 			if (_stricmp(g_skills[i].editorId.c_str(), editorId) == 0)
 			{
 				UInt8 skillCode = 0;
-				if (ReadXSkillsSkillCode(g_skills[i].realActorValue, skillCode)) {
+				if (ReadXSkillsSkillCode(g_skills[i].realActorValue, skillCode))
+				{
 					*result = static_cast<double>(skillCode);
 					Console_Print("AVCode for %s: %u", editorId, skillCode);
 					_MESSAGE("TCS: AVCode for %s: %u", editorId, skillCode);
@@ -109,7 +225,6 @@ namespace TCS
 	DEFINE_COMMAND_PLUGIN(GetTCSSkillCode,
 		"returns a True Custom Skills skill's xSkills-internal skill code (for use with MenuQue's own skill commands) by editorId, or 0 if not found/not yet resolvable",
 		0, 1, kParams_OneString);
-
 }
 
 extern "C"
